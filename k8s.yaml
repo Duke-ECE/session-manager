@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-manager
+  namespace: default
+  labels:
+    app: session-manager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: session-manager
+  template:
+    metadata:
+      labels:
+        app: session-manager
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: server
+          image: ghcr.io/duke-ece/session-manager:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50053
+          env:
+            - name: PORT
+              value: "50053"
+            - name: SUPABASE_URL
+              value: https://uwtptxsstaaexdujhsmp.supabase.co
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-service-role
+                  key: key
+            - name: SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: session-service-token
+                  key: token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-manager
+  namespace: default
+  labels:
+    app: session-manager
+spec:
+  type: ClusterIP
+  selector:
+    app: session-manager
+  ports:
+    - port: 50053
+      targetPort: 50053

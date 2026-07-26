@@ -1,0 +1,7 @@
+.git
+.github
+/server
+*.test
+*.out
+.DS_Store
+supabase/.temp

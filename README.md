@@ -35,7 +35,7 @@ Defined in the [`Duke-ECE/protos`](https://github.com/Duke-ECE/protos) repo
 | RPC | Rule |
 |---|---|
 | `CreateSession` / `GetSession` / `ListSessions` / `EndSession` | `user_id` required (`INVALID_ARGUMENT`); row owner mismatch → `PERMISSION_DENIED`; missing row → `NOT_FOUND` |
-| `GetTranscript` | session owner passes with just `user_id`; any other caller needs the service token |
+| `GetTranscript` | session owner passes with just `user_id`; a non-empty non-owner `user_id` → `PERMISSION_DENIED`; with no `user_id` (e.g. runtime hydration) the service token decides |
 | `AppendTurn` | service token always required (trusted runtime callers only; `user_id` is carried for auditing) |
 
 The service token is compared against the `x-service-token` gRPC metadata

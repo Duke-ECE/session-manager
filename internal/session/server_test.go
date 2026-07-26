@@ -279,8 +279,13 @@ func TestGetTranscriptNonOwner(t *testing.T) {
 	sess := mustCreate(t, c, "user-a")
 
 	_, err := c.GetTranscript(context.Background(), &v1.GetTranscriptRequest{SessionId: sess.GetId(), UserId: "user-b"})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("non-owner: code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+
+	_, err = c.GetTranscript(context.Background(), &v1.GetTranscriptRequest{SessionId: sess.GetId()})
 	if status.Code(err) != codes.Unauthenticated {
-		t.Errorf("non-owner no token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
+		t.Errorf("no identity no token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
 	}
 
 	// Runtime hydration: service token substitutes for ownership.

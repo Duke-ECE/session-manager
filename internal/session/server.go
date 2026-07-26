@@ -1,8 +1,8 @@
 // Package session implements the session.v1.SessionService gRPC handlers.
 // The service is the platform's privilege enforcement point for session
 // data: user-scoped RPCs require the caller's user_id and enforce row
-// ownership, while runtime-internal RPCs (AppendTurn, and GetTranscript for
-// a non-owner) require the shared service token.
+// ownership, while runtime-internal RPCs (AppendTurn, and GetTranscript
+// without a user identity) require the shared service token.
 package session
 
 import (
@@ -120,9 +120,14 @@ func (s *Server) GetTranscript(ctx context.Context, req *v1.GetTranscriptRequest
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	// The owner reads freely; anyone else (e.g. runtime hydration) needs the
-	// service token.
-	if req.GetUserId() != sess.UserID && !s.tokenOK(ctx) {
+	// The owner reads freely. A non-empty non-owner user_id is an
+	// authenticated cross-user access → PermissionDenied. With no user
+	// identity at all (e.g. runtime hydration), the service token decides.
+	if req.GetUserId() != "" {
+		if req.GetUserId() != sess.UserID {
+			return nil, status.Error(codes.PermissionDenied, "session belongs to another user")
+		}
+	} else if !s.tokenOK(ctx) {
 		return nil, status.Error(codes.Unauthenticated, "owner user_id or valid x-service-token metadata is required")
 	}
 	msgs, err := s.store.GetMessages(ctx, sess.ID)

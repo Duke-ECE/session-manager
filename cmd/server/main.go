@@ -7,12 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
-
-	v1 "github.com/Duke-ECE/protos/gen/go/session/v1"
+	"github.com/Duke-ECE/session-manager/internal/infrastructure/postgrest"
 	"github.com/Duke-ECE/session-manager/internal/session"
-	"github.com/Duke-ECE/session-manager/internal/store"
+	transportgrpc "github.com/Duke-ECE/session-manager/internal/transport/grpc"
 )
 
 func main() {
@@ -30,8 +27,8 @@ func main() {
 		port = "50053"
 	}
 
-	st := store.NewPostgREST(supabaseURL, serviceKey, nil)
-	srv := session.NewServer(st, serviceToken)
+	st := postgrest.NewClient(supabaseURL, serviceKey, nil)
+	svc := session.NewService(st, serviceToken)
 
 	addr := ":" + port
 	lis, err := net.Listen("tcp", addr)
@@ -39,9 +36,7 @@ func main() {
 		log.Fatalf("listen %s: %v", addr, err)
 	}
 
-	s := grpc.NewServer()
-	v1.RegisterSessionServiceServer(s, srv)
-	reflection.Register(s)
+	s := transportgrpc.NewServer(svc)
 
 	go func() {
 		log.Printf("session-manager gRPC listening on %s (supabase=%s, service_token_set=%t)", addr, supabaseURL, serviceToken != "")

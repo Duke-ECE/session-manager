@@ -10,7 +10,14 @@ data access, secrets, CI). They apply in full here.
 Repo-specific:
 
 - Contract: `session.v1.SessionService` (protos repo, pin version in go.mod).
-- Storage: Supabase Postgres via PostgREST (`internal/store`), tables
+- Layout (vertical slice + hexagonal): `internal/session` is the domain slice
+  (types, `Store` port, business rules in `service.go` — ownership, id
+  generation, end lifecycle, service-token policy); `internal/transport/grpc`
+  adapts it to gRPC (thin handlers, `NewServer`, the only error→status
+  mapping in `errors.go`); `internal/infrastructure/postgrest` implements the
+  `Store` port. The slice imports neither transport nor infrastructure.
+- Storage: Supabase Postgres via PostgREST
+  (`internal/infrastructure/postgrest`), tables
   `agent_sessions` / `agent_messages` — RLS on, no policies, service role only.
 - Privilege: user-scoped RPCs enforce ownership (`PERMISSION_DENIED`);
   `AppendTurn` / token-only `GetTranscript` require `x-service-token`.

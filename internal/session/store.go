@@ -1,40 +1,13 @@
-// Package store persists session records and transcripts in Supabase
-// Postgres via the PostgREST REST API, using the service role key (the
-// tables have RLS enabled with no policies — service-role-only access).
-package store
+package session
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
-// ErrNotFound is returned when the requested row does not exist.
-var ErrNotFound = errors.New("store: not found")
-
-// Session mirrors a row in agent_sessions. Timestamps are RFC 3339 strings
-// as returned by PostgREST; EndedAt is empty unless the session has ended.
-type Session struct {
-	ID         string
-	UserID     string
-	Status     string
-	LLMModel   string
-	CreatedAt  string
-	LastActive string
-	EndedAt    string
-}
-
-// Message mirrors a row in agent_messages. ContentJSON is the raw JSON
-// payload stored in the content jsonb column.
-type Message struct {
-	Seq         int32
-	Role        string
-	ContentJSON string
-	CreatedAt   string
-}
-
-// Store is the persistence seam. The PostgREST implementation is the only
-// production one; tests substitute fakes.
+// Store is the persistence port. The PostgREST implementation
+// (internal/infrastructure/postgrest) is the only production one; tests
+// substitute fakes.
 type Store interface {
 	// CreateSession inserts a row with the given server-generated id and
 	// returns it with database defaults (status, timestamps) filled in.

@@ -1,4 +1,4 @@
-package session
+package grpc
 
 import (
 	"context"
@@ -22,7 +22,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	v1 "github.com/Duke-ECE/protos/gen/go/session/v1"
-	"github.com/Duke-ECE/session-manager/internal/store"
+	"github.com/Duke-ECE/session-manager/internal/infrastructure/postgrest"
+	"github.com/Duke-ECE/session-manager/internal/session"
 )
 
 const testToken = "test-service-token"
@@ -39,8 +40,7 @@ func newTestClient(t *testing.T, serviceToken string) v1.SessionServiceClient {
 	t.Cleanup(ts.Close)
 
 	lis := bufconn.Listen(1024 * 1024)
-	s := grpc.NewServer()
-	v1.RegisterSessionServiceServer(s, NewServer(store.NewPostgREST(ts.URL, "test-key", nil), serviceToken))
+	s := NewServer(session.NewService(postgrest.NewClient(ts.URL, "test-key", nil), serviceToken))
 	go func() { _ = s.Serve(lis) }()
 	t.Cleanup(s.Stop)
 

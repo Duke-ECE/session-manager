@@ -55,7 +55,7 @@ Server reflection is enabled for `grpcurl`.
 
 ## Database
 
-`supabase/migrations/0001_sessions.sql` creates `agent_sessions` and
+`supabase/migrations/20260726000001_sessions.sql` creates `agent_sessions` and
 `agent_messages` (RLS on, no policies). Apply it with the Supabase CLI or
 paste it into the SQL editor.
 

@@ -200,6 +200,17 @@ func TestSessionLifecycle(t *testing.T) {
 	if _, err := c.EndSession(ctx, &v1.EndSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); err != nil {
 		t.Errorf("second EndSession should be idempotent: %v", err)
 	}
+
+	// Appending to an ended session is FailedPrecondition, even with a valid
+	// service token: ended is terminal.
+	_, err = c.AppendTurn(tokenCtx(ctx, testServiceToken), &v1.AppendTurnRequest{
+		SessionId: sess.GetId(),
+		UserId:    "user-a",
+		Messages:  []*v1.TurnMessage{{Role: "user", ContentJson: `{"text":"late"}`}},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("AppendTurn ended: code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
 }
 
 // TestListSessionsPerUser verifies per-user filtering and most-recently-

@@ -65,7 +65,8 @@ func (s *Service) EndSession(ctx context.Context, sessionID, userID string) erro
 
 // AppendTurn appends one completed turn's messages to the transcript. It is
 // runtime-internal: a valid service token is always required. Appending zero
-// messages is a no-op.
+// messages is a no-op. Ended sessions are terminal: appends fail with
+// FailedPrecondition so a transcript stays exactly as the user left it.
 func (s *Service) AppendTurn(ctx context.Context, sessionID string, msgs []Message, tokens []string) error {
 	if !s.tokenOK(tokens) {
 		return unauthenticated("valid x-service-token metadata is required")
@@ -76,11 +77,17 @@ func (s *Service) AppendTurn(ctx context.Context, sessionID string, msgs []Messa
 	if len(msgs) == 0 {
 		return nil
 	}
-	// Ensure the session exists so a typo'd id can't orphan messages.
-	if _, err := s.store.GetSession(ctx, sessionID); err != nil {
+	// Ensure the session exists so a typo'd id can't orphan messages, and
+	// refuse to extend an ended session: ended is terminal, the transcript
+	// stays exactly as the user left it.
+	sess, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
 		return err
 	}
-	_, err := s.store.AppendMessages(ctx, sessionID, msgs)
+	if sess.Status == "ended" {
+		return failedPrecondition("session has ended")
+	}
+	_, err = s.store.AppendMessages(ctx, sessionID, msgs)
 	return err
 }
 

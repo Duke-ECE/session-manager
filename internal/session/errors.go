@@ -18,6 +18,9 @@ const (
 	KindPermissionDenied
 	// KindUnauthenticated is a missing or wrong credential.
 	KindUnauthenticated
+	// KindFailedPrecondition is a state conflict, e.g. writing to an
+	// already-ended session.
+	KindFailedPrecondition
 )
 
 // Error is a domain failure with a caller-facing message. The transport
@@ -36,4 +39,7 @@ func permissionDenied(msg string) error {
 }
 func unauthenticated(msg string) error {
 	return &Error{Kind: KindUnauthenticated, Message: msg}
+}
+func failedPrecondition(msg string) error {
+	return &Error{Kind: KindFailedPrecondition, Message: msg}
 }

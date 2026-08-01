@@ -229,6 +229,39 @@ func TestAppendTurnUnknownSession(t *testing.T) {
 	}
 }
 
+func TestAppendTurnEndedSession(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+	ctx := tokenCtx(context.Background(), testToken)
+
+	if _, err := c.AppendTurn(ctx, &v1.AppendTurnRequest{
+		SessionId: sess.GetId(),
+		UserId:    "user-a",
+		Messages:  []*v1.TurnMessage{{Role: "user", ContentJson: `{"text":"hi"}`}},
+	}); err != nil {
+		t.Fatalf("AppendTurn active: %v", err)
+	}
+	if _, err := c.EndSession(context.Background(), &v1.EndSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+	_, err := c.AppendTurn(ctx, &v1.AppendTurnRequest{
+		SessionId: sess.GetId(),
+		UserId:    "user-a",
+		Messages:  []*v1.TurnMessage{{Role: "user", ContentJson: `{"text":"late"}`}},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("ended: code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+	// The transcript is untouched: still exactly the one pre-end turn.
+	got, err := c.GetTranscript(ctx, &v1.GetTranscriptRequest{SessionId: sess.GetId()})
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if len(got.GetMessages()) != 1 {
+		t.Errorf("transcript len = %d, want 1 (ended append must not persist)", len(got.GetMessages()))
+	}
+}
+
 func TestAppendGetRoundTrip(t *testing.T) {
 	c := newTestClient(t, testToken)
 	sess := mustCreate(t, c, "user-a")

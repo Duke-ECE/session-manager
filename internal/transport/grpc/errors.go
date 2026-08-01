@@ -26,6 +26,8 @@ func toStatus(err error) error {
 			code = codes.PermissionDenied
 		case session.KindUnauthenticated:
 			code = codes.Unauthenticated
+		case session.KindFailedPrecondition:
+			code = codes.FailedPrecondition
 		}
 		return status.Error(code, domErr.Message)
 	}

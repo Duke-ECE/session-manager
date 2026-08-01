@@ -16,6 +16,9 @@ Repo-specific:
   adapts it to gRPC (thin handlers, `NewServer`, the only error→status
   mapping in `errors.go`); `internal/infrastructure/postgrest` implements the
   `Store` port. The slice imports neither transport nor infrastructure.
+- Tests: unit tests next to code (fake PostgREST via httptest + gRPC
+  bufconn); `test/` holds whole-service integration tests (real PostgREST
+  client against a fake Supabase, real TCP gRPC).
 - Storage: Supabase Postgres via PostgREST
   (`internal/infrastructure/postgrest`), tables
   `agent_sessions` / `agent_messages` — RLS on, no policies, service role only.

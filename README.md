@@ -65,14 +65,12 @@ Requires Go 1.25. To pick up proto changes,
 `go get github.com/Duke-ECE/protos@latest`.
 
 ```sh
-go build ./...
-go vet ./...
-go test ./...
+make build vet test   # standard Makefile; `make gates` before every push
 
 SUPABASE_URL=https://<project>.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<key> \
 SERVICE_TOKEN=dev-token \
-go run ./cmd/server   # serves on :50053
+make run   # serves on :50053
 
 grpcurl -plaintext localhost:50053 list
 grpcurl -plaintext localhost:50053 session.v1.SessionService/CreateSession \

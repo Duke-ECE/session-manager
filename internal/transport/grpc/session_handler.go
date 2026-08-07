@@ -24,7 +24,7 @@ func NewSessionHandler(svc *session.Service) *SessionHandler {
 }
 
 func (h *SessionHandler) CreateSession(ctx context.Context, req *v1.CreateSessionRequest) (*v1.CreateSessionResponse, error) {
-	sess, err := h.svc.CreateSession(ctx, req.GetUserId(), req.GetLlmModel())
+	sess, err := h.svc.CreateSession(ctx, req.GetUserId(), req.GetLlmModel(), req.GetAgentId())
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -110,6 +110,7 @@ func toProtoSession(sess session.Session) *v1.Session {
 		Status:     sess.Status,
 		LlmModel:   sess.LLMModel,
 		Title:      sess.Title,
+		AgentId:    sess.AgentID,
 		CreatedAt:  sess.CreatedAt,
 		LastActive: sess.LastActive,
 		EndedAt:    sess.EndedAt,

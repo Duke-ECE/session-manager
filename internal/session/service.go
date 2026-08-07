@@ -26,8 +26,8 @@ func NewService(st Store, serviceToken string) *Service {
 }
 
 // CreateSession validates the request, generates the id, and inserts the
-// session row.
-func (s *Service) CreateSession(ctx context.Context, userID, llmModel string) (Session, error) {
+// session row. agentID is the opaque agent-template id; empty means none.
+func (s *Service) CreateSession(ctx context.Context, userID, llmModel, agentID string) (Session, error) {
 	if userID == "" {
 		return Session{}, invalidArgument("user_id is required")
 	}
@@ -35,7 +35,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, llmModel string) (S
 	if err != nil {
 		return Session{}, internal(fmt.Sprintf("generate session id: %v", err))
 	}
-	return s.store.CreateSession(ctx, id, userID, llmModel)
+	return s.store.CreateSession(ctx, id, userID, llmModel, agentID)
 }
 
 // GetSession returns the session only if userID owns it.

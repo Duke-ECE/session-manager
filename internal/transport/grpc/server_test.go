@@ -105,6 +105,51 @@ func TestCreateSessionEmptyUser(t *testing.T) {
 	}
 }
 
+func TestCreateSessionAgentID(t *testing.T) {
+	c := newTestClient(t, testToken)
+
+	// With an agent id: it persists and round-trips through
+	// GetSession/ListSessions.
+	resp, err := c.CreateSession(context.Background(), &v1.CreateSessionRequest{
+		UserId:   "user-a",
+		LlmModel: "gpt-4o-mini",
+		AgentId:  "agent-coder",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sess := resp.GetSession()
+	if sess.GetAgentId() != "agent-coder" {
+		t.Errorf("created agent_id = %q, want %q", sess.GetAgentId(), "agent-coder")
+	}
+
+	got, err := c.GetSession(context.Background(), &v1.GetSessionRequest{SessionId: sess.GetId(), UserId: "user-a"})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.GetSession().GetAgentId() != "agent-coder" {
+		t.Errorf("got agent_id = %q, want %q", got.GetSession().GetAgentId(), "agent-coder")
+	}
+
+	// Without an agent id: still works, exposed as empty string.
+	plain := mustCreate(t, c, "user-a")
+	if plain.GetAgentId() != "" {
+		t.Errorf("agentless session agent_id = %q, want empty", plain.GetAgentId())
+	}
+
+	list, err := c.ListSessions(context.Background(), &v1.ListSessionsRequest{UserId: "user-a"})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	byID := map[string]string{}
+	for _, s := range list.GetSessions() {
+		byID[s.GetId()] = s.GetAgentId()
+	}
+	if byID[sess.GetId()] != "agent-coder" || byID[plain.GetId()] != "" {
+		t.Errorf("listed agent_ids = %v, want %q and empty", byID, "agent-coder")
+	}
+}
+
 func TestGetSessionOwnership(t *testing.T) {
 	c := newTestClient(t, testToken)
 	sess := mustCreate(t, c, "user-a")

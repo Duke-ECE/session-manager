@@ -11,7 +11,8 @@ import (
 type Store interface {
 	// CreateSession inserts a row with the given server-generated id and
 	// returns it with database defaults (status, timestamps) filled in.
-	CreateSession(ctx context.Context, id, userID, llmModel string) (Session, error)
+	// agentID is the opaque agent-template id; empty means none.
+	CreateSession(ctx context.Context, id, userID, llmModel, agentID string) (Session, error)
 	// GetSession returns one session or ErrNotFound.
 	GetSession(ctx context.Context, id string) (Session, error)
 	// ListSessions returns a user's sessions, most recently active first.

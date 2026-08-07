@@ -21,6 +21,7 @@ type sessionRow struct {
 	Status     string `json:"status"`
 	LLMModel   string `json:"llm_model"`
 	Title      string `json:"title"`
+	AgentID    string `json:"agent_id"`
 	CreatedAt  string `json:"created_at"`
 	LastActive string `json:"last_active"`
 	EndedAt    string `json:"ended_at"`
@@ -33,6 +34,7 @@ func (r sessionRow) toSession() session.Session {
 		Status:     r.Status,
 		LLMModel:   r.LLMModel,
 		Title:      r.Title,
+		AgentID:    r.AgentID,
 		CreatedAt:  r.CreatedAt,
 		LastActive: r.LastActive,
 		EndedAt:    r.EndedAt,
@@ -56,10 +58,13 @@ func (r messageRow) toMessage() session.Message {
 	}
 }
 
-func (c *Client) CreateSession(ctx context.Context, id, userID, llmModel string) (session.Session, error) {
+func (c *Client) CreateSession(ctx context.Context, id, userID, llmModel, agentID string) (session.Session, error) {
 	row := map[string]string{"id": id, "user_id": userID}
 	if llmModel != "" {
 		row["llm_model"] = llmModel
+	}
+	if agentID != "" {
+		row["agent_id"] = agentID
 	}
 	var rows []sessionRow
 	if err := c.do(ctx, http.MethodPost, "/rest/v1/agent_sessions", nil, row, "return=representation", &rows); err != nil {

@@ -1,5 +1,5 @@
-github.com/Duke-ECE/protos v0.4.0 h1:ShRyC/loDPhfPPtdf+Z7loJ1YlJNGlMQuRaJtO7T7jY=
-github.com/Duke-ECE/protos v0.4.0/go.mod h1:R1uudrgzNcZhKv0QBqCu+jcP77wg76uT8+57e1O5YrM=
+github.com/Duke-ECE/protos v0.5.0 h1:BhEv/XeaG+aqlMcckLPIhTLOfm3goxoOnLU6TtL9qos=
+github.com/Duke-ECE/protos v0.5.0/go.mod h1:R1uudrgzNcZhKv0QBqCu+jcP77wg76uT8+57e1O5YrM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=

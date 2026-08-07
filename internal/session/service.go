@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,30 @@ func (s *Service) AppendTurn(ctx context.Context, sessionID string, msgs []Messa
 	}
 	_, err = s.store.AppendMessages(ctx, sessionID, msgs)
 	return err
+}
+
+// maxTitleLen caps stored titles; longer input is truncated, not rejected.
+const maxTitleLen = 120
+
+// SetTitle sets the session's display title (e.g. an LLM-generated summary
+// of the first turn). It is runtime-internal like AppendTurn: a valid
+// service token is always required. A title is metadata, not transcript, so
+// it stays settable on ended sessions and never bumps last_active.
+func (s *Service) SetTitle(ctx context.Context, sessionID, title string, tokens []string) (Session, error) {
+	if !s.tokenOK(tokens) {
+		return Session{}, unauthenticated("valid x-service-token metadata is required")
+	}
+	if sessionID == "" {
+		return Session{}, invalidArgument("session_id is required")
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return Session{}, invalidArgument("title is required")
+	}
+	if r := []rune(title); len(r) > maxTitleLen {
+		title = string(r[:maxTitleLen])
+	}
+	return s.store.SetTitle(ctx, sessionID, title)
 }
 
 // GetTranscript returns the full transcript. The owner reads freely. A

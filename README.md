@@ -27,6 +27,8 @@ Defined in the [`Duke-ECE/protos`](https://github.com/Duke-ECE/protos) repo
 - `EndSession(session_id, user_id)` — sets `status='ended'`, `ended_at=now`
 - `AppendTurn(session_id, user_id, messages)` — runtime write-through after a
   completed Chat turn; `seq` is assigned by the server (`max(seq)+1…`)
+- `SetTitle(session_id, title) → Session` — runtime-internal display title;
+  trimmed, non-empty, capped at 120 chars; settable on ended sessions
 - `GetTranscript(session_id, user_id?) → [TurnMessage]` — full transcript
   ordered by seq
 
@@ -37,6 +39,7 @@ Defined in the [`Duke-ECE/protos`](https://github.com/Duke-ECE/protos) repo
 | `CreateSession` / `GetSession` / `ListSessions` / `EndSession` | `user_id` required (`INVALID_ARGUMENT`); row owner mismatch → `PERMISSION_DENIED`; missing row → `NOT_FOUND` |
 | `GetTranscript` | session owner passes with just `user_id`; a non-empty non-owner `user_id` → `PERMISSION_DENIED`; with no `user_id` (e.g. runtime hydration) the service token decides |
 | `AppendTurn` | service token always required (trusted runtime callers only; `user_id` is carried for auditing) |
+| `SetTitle` | service token always required (runtime-internal; metadata, so settable on ended sessions) |
 
 The service token is compared against the `x-service-token` gRPC metadata
 header; a missing/wrong token is `UNAUTHENTICATED`. If `SERVICE_TOKEN` is

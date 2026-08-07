@@ -262,6 +262,114 @@ func TestAppendTurnEndedSession(t *testing.T) {
 	}
 }
 
+func TestSetTitleRequiresToken(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+	req := &v1.SetTitleRequest{SessionId: sess.GetId(), Title: "my chat"}
+
+	_, err := c.SetTitle(context.Background(), req)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("no token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
+	}
+
+	_, err = c.SetTitle(tokenCtx(context.Background(), "wrong"), req)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("wrong token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
+	}
+
+	resp, err := c.SetTitle(tokenCtx(context.Background(), testToken), req)
+	if err != nil {
+		t.Fatalf("valid token: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "my chat" {
+		t.Errorf("response title = %q, want %q", resp.GetSession().GetTitle(), "my chat")
+	}
+	got, err := c.GetSession(context.Background(), &v1.GetSessionRequest{SessionId: sess.GetId(), UserId: "user-a"})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.GetSession().GetTitle() != "my chat" {
+		t.Errorf("stored title = %q, want %q", got.GetSession().GetTitle(), "my chat")
+	}
+}
+
+func TestSetTitleEmptyRejected(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+	ctx := tokenCtx(context.Background(), testToken)
+
+	for _, title := range []string{"", "   "} {
+		_, err := c.SetTitle(ctx, &v1.SetTitleRequest{SessionId: sess.GetId(), Title: title})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("title %q: code = %v, want InvalidArgument (err=%v)", title, status.Code(err), err)
+		}
+	}
+
+	// Surrounding whitespace is trimmed, not rejected.
+	resp, err := c.SetTitle(ctx, &v1.SetTitleRequest{SessionId: sess.GetId(), Title: "  hi  "})
+	if err != nil {
+		t.Fatalf("padded title: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "hi" {
+		t.Errorf("title = %q, want %q (trimmed)", resp.GetSession().GetTitle(), "hi")
+	}
+}
+
+func TestSetTitleUnknownSession(t *testing.T) {
+	c := newTestClient(t, testToken)
+
+	_, err := c.SetTitle(tokenCtx(context.Background(), testToken), &v1.SetTitleRequest{
+		SessionId: "sess-nope",
+		Title:     "my chat",
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("code = %v, want NotFound (err=%v)", status.Code(err), err)
+	}
+}
+
+func TestSetTitleEndedSession(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+
+	if _, err := c.EndSession(context.Background(), &v1.EndSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+	// A title is metadata, not transcript: settable on ended sessions.
+	resp, err := c.SetTitle(tokenCtx(context.Background(), testToken), &v1.SetTitleRequest{
+		SessionId: sess.GetId(),
+		Title:     "retrospective",
+	})
+	if err != nil {
+		t.Fatalf("SetTitle on ended session: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "retrospective" {
+		t.Errorf("title = %q, want %q", resp.GetSession().GetTitle(), "retrospective")
+	}
+	if resp.GetSession().GetStatus() != "ended" {
+		t.Errorf("status = %q, want ended (untouched)", resp.GetSession().GetStatus())
+	}
+}
+
+func TestSetTitleTruncation(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+
+	// 130 runes, multibyte: truncates to the 120-rune cap without splitting
+	// a character.
+	long := strings.Repeat("é", 130)
+	resp, err := c.SetTitle(tokenCtx(context.Background(), testToken), &v1.SetTitleRequest{
+		SessionId: sess.GetId(),
+		Title:     long,
+	})
+	if err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	want := strings.Repeat("é", 120)
+	if resp.GetSession().GetTitle() != want {
+		t.Errorf("title len = %d runes, want 120", len([]rune(resp.GetSession().GetTitle())))
+	}
+}
+
 func TestAppendGetRoundTrip(t *testing.T) {
 	c := newTestClient(t, testToken)
 	sess := mustCreate(t, c, "user-a")

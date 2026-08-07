@@ -20,6 +20,7 @@ type sessionRow struct {
 	UserID     string `json:"user_id"`
 	Status     string `json:"status"`
 	LLMModel   string `json:"llm_model"`
+	Title      string `json:"title"`
 	CreatedAt  string `json:"created_at"`
 	LastActive string `json:"last_active"`
 	EndedAt    string `json:"ended_at"`
@@ -31,6 +32,7 @@ func (r sessionRow) toSession() session.Session {
 		UserID:     r.UserID,
 		Status:     r.Status,
 		LLMModel:   r.LLMModel,
+		Title:      r.Title,
 		CreatedAt:  r.CreatedAt,
 		LastActive: r.LastActive,
 		EndedAt:    r.EndedAt,
@@ -108,6 +110,20 @@ func (c *Client) EndSession(ctx context.Context, id string, endedAt time.Time) e
 		return session.ErrNotFound
 	}
 	return nil
+}
+
+func (c *Client) SetTitle(ctx context.Context, id, title string) (session.Session, error) {
+	q := url.Values{"id": {"eq." + id}}
+	// Only the title column: titling must not bump last_active.
+	body := map[string]string{"title": title}
+	var rows []sessionRow
+	if err := c.do(ctx, http.MethodPatch, "/rest/v1/agent_sessions", q, body, "return=representation", &rows); err != nil {
+		return session.Session{}, err
+	}
+	if len(rows) == 0 {
+		return session.Session{}, session.ErrNotFound
+	}
+	return rows[0].toSession(), nil
 }
 
 func (c *Client) AppendMessages(ctx context.Context, sessionID string, msgs []session.Message) ([]session.Message, error) {

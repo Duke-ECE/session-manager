@@ -18,6 +18,10 @@ type Store interface {
 	ListSessions(ctx context.Context, userID string) ([]Session, error)
 	// EndSession marks the session ended; ErrNotFound if it does not exist.
 	EndSession(ctx context.Context, id string, endedAt time.Time) error
+	// SetTitle sets the session's display title and returns the updated row;
+	// ErrNotFound if the session does not exist. It does not touch
+	// last_active: titling is metadata, not activity.
+	SetTitle(ctx context.Context, id, title string) (Session, error)
 	// AppendMessages assigns seq = max(seq)+1... per session, inserts the
 	// messages, bumps the session's last_active, and returns the inserted
 	// rows with seq and created_at filled in.

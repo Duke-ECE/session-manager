@@ -256,6 +256,76 @@ func TestListSessionsPerUser(t *testing.T) {
 	}
 }
 
+// TestSetTitle drives title writes through the whole stack: service-token
+// auth, the title round-tripping via GetSession/ListSessions, last_active
+// staying untouched (titling is not activity), and ended sessions staying
+// settable.
+func TestSetTitle(t *testing.T) {
+	c := newSessionServiceClient(t)
+	ctx := context.Background()
+
+	first := mustCreateSession(t, c, "user-a")
+	second := mustCreateSession(t, c, "user-a")
+	if first.GetTitle() != "" || second.GetTitle() != "" {
+		t.Errorf("new sessions should have empty titles, got %q / %q", first.GetTitle(), second.GetTitle())
+	}
+
+	// Make the first session the most recently active.
+	mustAppendTurn(t, c, first.GetId(), &v1.TurnMessage{Role: "user", ContentJson: `{"text":"ping"}`})
+
+	// SetTitle without a service token is rejected.
+	_, err := c.SetTitle(ctx, &v1.SetTitleRequest{SessionId: second.GetId(), Title: "second chat"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("SetTitle no token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
+	}
+
+	// Empty titles are rejected even with a token.
+	_, err = c.SetTitle(tokenCtx(ctx, testServiceToken), &v1.SetTitleRequest{SessionId: second.GetId(), Title: "  "})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("SetTitle empty title: code = %v, want InvalidArgument (err=%v)", status.Code(err), err)
+	}
+
+	// A valid set returns the updated session and persists.
+	resp, err := c.SetTitle(tokenCtx(ctx, testServiceToken), &v1.SetTitleRequest{SessionId: second.GetId(), Title: "second chat"})
+	if err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "second chat" {
+		t.Errorf("response title = %q, want %q", resp.GetSession().GetTitle(), "second chat")
+	}
+
+	list, err := c.ListSessions(ctx, &v1.ListSessionsRequest{UserId: "user-a"})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	got := list.GetSessions()
+	if len(got) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(got))
+	}
+	// Titling the second session must not bump its last_active: the first
+	// session still sorts first.
+	if got[0].GetId() != first.GetId() || got[1].GetId() != second.GetId() {
+		t.Errorf("order = [%q %q], want [%q %q] (SetTitle must not touch last_active)",
+			got[0].GetId(), got[1].GetId(), first.GetId(), second.GetId())
+	}
+	if got[1].GetTitle() != "second chat" {
+		t.Errorf("listed title = %q, want %q", got[1].GetTitle(), "second chat")
+	}
+
+	// Titles stay settable on ended sessions (metadata, not transcript).
+	if _, err := c.EndSession(ctx, &v1.EndSessionRequest{SessionId: first.GetId(), UserId: "user-a"}); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+	resp, err = c.SetTitle(tokenCtx(ctx, testServiceToken), &v1.SetTitleRequest{SessionId: first.GetId(), Title: "first chat"})
+	if err != nil {
+		t.Fatalf("SetTitle on ended session: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "first chat" || resp.GetSession().GetStatus() != "ended" {
+		t.Errorf("got (title=%q, status=%q), want (first chat, ended)",
+			resp.GetSession().GetTitle(), resp.GetSession().GetStatus())
+	}
+}
+
 // fakeSupabase is a minimal in-memory PostgREST stand-in: it understands
 // eq-filters, select projections, order, limit, and Prefer:
 // return=representation for the two tables session-manager uses.

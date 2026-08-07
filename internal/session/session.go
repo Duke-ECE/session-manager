@@ -15,6 +15,7 @@ type Session struct {
 	UserID     string
 	Status     string
 	LLMModel   string
+	Title      string
 	CreatedAt  string
 	LastActive string
 	EndedAt    string

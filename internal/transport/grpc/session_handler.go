@@ -69,6 +69,14 @@ func (h *SessionHandler) AppendTurn(ctx context.Context, req *v1.AppendTurnReque
 	return &v1.AppendTurnResponse{}, nil
 }
 
+func (h *SessionHandler) SetTitle(ctx context.Context, req *v1.SetTitleRequest) (*v1.SetTitleResponse, error) {
+	sess, err := h.svc.SetTitle(ctx, req.GetSessionId(), req.GetTitle(), presentedTokens(ctx))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &v1.SetTitleResponse{Session: toProtoSession(sess)}, nil
+}
+
 func (h *SessionHandler) GetTranscript(ctx context.Context, req *v1.GetTranscriptRequest) (*v1.GetTranscriptResponse, error) {
 	msgs, err := h.svc.GetTranscript(ctx, req.GetSessionId(), req.GetUserId(), presentedTokens(ctx))
 	if err != nil {
@@ -101,6 +109,7 @@ func toProtoSession(sess session.Session) *v1.Session {
 		UserId:     sess.UserID,
 		Status:     sess.Status,
 		LlmModel:   sess.LLMModel,
+		Title:      sess.Title,
 		CreatedAt:  sess.CreatedAt,
 		LastActive: sess.LastActive,
 		EndedAt:    sess.EndedAt,

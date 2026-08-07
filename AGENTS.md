@@ -23,7 +23,8 @@ Repo-specific:
   (`internal/infrastructure/postgrest`), tables
   `agent_sessions` / `agent_messages` — RLS on, no policies, service role only.
 - Privilege: user-scoped RPCs enforce ownership (`PERMISSION_DENIED`);
-  `AppendTurn` / token-only `GetTranscript` require `x-service-token`.
+  `AppendTurn` / `SetTitle` / token-only `GetTranscript` require
+  `x-service-token`.
 - Migrations live in `supabase/migrations/` with **timestamped** versions —
   several repos share this Supabase project; counters collide.
 - Manual check: `grpcurl -plaintext localhost:50053 list`.

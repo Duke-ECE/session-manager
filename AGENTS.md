@@ -25,6 +25,9 @@ Repo-specific:
 - Privilege: user-scoped RPCs enforce ownership (`PERMISSION_DENIED`);
   `AppendTurn` requires `x-service-token`; `GetTranscript` / `SetTitle`
   follow the owner-or-token pattern (owner `user_id` or service token).
+  Owner-path `GetTranscript` reads redact the `api_key` from `config` turns
+  (the session's frozen LLM triple) so it never reaches browsers; the token
+  path returns the full triple for runtime hydration.
 - Retention: `RETENTION_DAYS` > 0 starts a janitor (`internal/session/janitor.go`,
   sweep on startup + every 24h) deleting ended sessions older than the cutoff
   and their messages; 0/unset = disabled.

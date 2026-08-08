@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -164,7 +165,9 @@ const maxTranscriptLimit = 1000
 // transcript is returned (hasMore always false); with limit > 0 the latest
 // window — the up to limit messages with seq < beforeSeq (beforeSeq = 0
 // means "from the end") — and hasMore true when older messages exist before
-// the window.
+// the window. Owner-path reads redact the LLM api_key from "config" turns
+// (see redactConfigAPIKeys); the token path returns them intact because
+// runtime hydration needs the full triple to resume the session.
 func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, tokens []string, beforeSeq, limit int32) ([]Message, bool, error) {
 	if sessionID == "" {
 		return nil, false, invalidArgument("session_id is required")
@@ -188,7 +191,48 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, t
 	} else if !s.tokenOK(tokens) {
 		return nil, false, unauthenticated("owner user_id or valid x-service-token metadata is required")
 	}
-	return s.store.GetMessages(ctx, sess.ID, beforeSeq, limit)
+	msgs, hasMore, err := s.store.GetMessages(ctx, sess.ID, beforeSeq, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	// Owner-path reads (the web backend fetching a browser transcript) must
+	// never expose the frozen LLM key persisted in config turns; the token
+	// path (runtime hydration) needs the full triple to resume the session.
+	if userID != "" {
+		redactConfigAPIKeys(msgs)
+	}
+	return msgs, hasMore, nil
+}
+
+// redactConfigAPIKeys strips the LLM api_key from "config" transcript turns
+// in place: a turn's content_json {"llm": {"api_key": ..., ...}} is decoded,
+// the api_key entry is deleted (not blanked — an absent key can't be mistaken
+// for a credential), and the payload is re-encoded. Anything unexpected —
+// malformed JSON, a non-object payload, a missing/non-object "llm", no
+// api_key — leaves the turn byte-identical; redaction never fails a read.
+func redactConfigAPIKeys(msgs []Message) {
+	for i := range msgs {
+		if msgs[i].Role != "config" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(msgs[i].ContentJSON), &payload); err != nil {
+			continue
+		}
+		llm, ok := payload["llm"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := llm["api_key"]; !ok {
+			continue
+		}
+		delete(llm, "api_key")
+		b, err := json.Marshal(payload)
+		if err != nil {
+			continue
+		}
+		msgs[i].ContentJSON = string(b)
+	}
 }
 
 // ownedSession validates the user-scoped preconditions and returns the

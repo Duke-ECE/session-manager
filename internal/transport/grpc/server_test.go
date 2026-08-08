@@ -498,6 +498,84 @@ func TestGetTranscriptNonOwner(t *testing.T) {
 	}
 }
 
+func TestGetTranscriptConfigRedaction(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+	ctx := context.Background()
+
+	// A mixed transcript: config turns carry the session's frozen LLM triple;
+	// the odd-shaped one exercises the never-fail-the-read rule. (A truly
+	// malformed content_json can't round-trip through the PostgREST client's
+	// jsonb column — that case is covered at the service layer.)
+	configFull := `{"llm":{"api_key":"sk-platform-secret","base_url":"https://llm.example.com/v1","model":"gpt-4o-mini"}}`
+	configOddShape := `{"llm":"not-an-object"}`
+	systemTurn := `{"content":"you are a helpful assistant"}`
+	userTurn := `{"text":"hi"}`
+	if _, err := c.AppendTurn(tokenCtx(ctx, testToken), &v1.AppendTurnRequest{
+		SessionId: sess.GetId(),
+		UserId:    "user-a",
+		Messages: []*v1.TurnMessage{
+			{Role: "system", ContentJson: systemTurn},
+			{Role: "config", ContentJson: configFull},
+			{Role: "user", ContentJson: userTurn},
+			{Role: "config", ContentJson: configOddShape},
+		},
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+
+	// Owner path (what the web backend calls for browser reads): the config
+	// api_key is gone, everything else is intact and in order.
+	owner, err := c.GetTranscript(ctx, &v1.GetTranscriptRequest{SessionId: sess.GetId(), UserId: "user-a"})
+	if err != nil {
+		t.Fatalf("GetTranscript as owner: %v", err)
+	}
+	msgs := owner.GetMessages()
+	if len(msgs) != 4 {
+		t.Fatalf("owner transcript = %d messages, want 4", len(msgs))
+	}
+	for i, wantRole := range []string{"system", "config", "user", "config"} {
+		if msgs[i].GetRole() != wantRole || msgs[i].GetSeq() != int32(i+1) {
+			t.Errorf("message %d = (seq %d, role %q), want (seq %d, %q) — ordering broken",
+				i, msgs[i].GetSeq(), msgs[i].GetRole(), i+1, wantRole)
+		}
+	}
+	if got := msgs[0].GetContentJson(); got != systemTurn {
+		t.Errorf("system turn = %q, want byte-identical %q", got, systemTurn)
+	}
+	if got := msgs[2].GetContentJson(); got != userTurn {
+		t.Errorf("user turn = %q, want byte-identical %q", got, userTurn)
+	}
+
+	var redacted struct {
+		LLM map[string]string `json:"llm"`
+	}
+	if err := json.Unmarshal([]byte(msgs[1].GetContentJson()), &redacted); err != nil {
+		t.Fatalf("redacted config turn is not valid JSON: %v", err)
+	}
+	if _, leaked := redacted.LLM["api_key"]; leaked {
+		t.Errorf("owner-path config turn still carries api_key: %s", msgs[1].GetContentJson())
+	}
+	if redacted.LLM["base_url"] != "https://llm.example.com/v1" || redacted.LLM["model"] != "gpt-4o-mini" {
+		t.Errorf("redacted config llm = %v, want base_url/model intact", redacted.LLM)
+	}
+	if got := msgs[3].GetContentJson(); got != configOddShape {
+		t.Errorf("odd-shape config turn = %q, want byte-identical passthrough %q", got, configOddShape)
+	}
+
+	// Token path (runtime hydration): the full triple must survive — the
+	// runtime needs the key to resume the session.
+	token, err := c.GetTranscript(tokenCtx(ctx, testToken), &v1.GetTranscriptRequest{SessionId: sess.GetId()})
+	if err != nil {
+		t.Fatalf("GetTranscript with token: %v", err)
+	}
+	for i, want := range []string{systemTurn, configFull, userTurn, configOddShape} {
+		if got := token.GetMessages()[i].GetContentJson(); got != want {
+			t.Errorf("token-path message %d = %q, want byte-identical %q", i, got, want)
+		}
+	}
+}
+
 func TestListSessionsPagination(t *testing.T) {
 	c := newTestClient(t, testToken)
 	var ids []string

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/Duke-ECE/session-manager/internal/session"
@@ -88,17 +89,27 @@ func (c *Client) GetSession(ctx context.Context, id string) (session.Session, er
 	return rows[0].toSession(), nil
 }
 
-func (c *Client) ListSessions(ctx context.Context, userID string) ([]session.Session, error) {
-	q := url.Values{"user_id": {"eq." + userID}, "order": {"last_active.desc"}}
+func (c *Client) ListSessions(ctx context.Context, userID string, limit, offset int32) ([]session.Session, bool, error) {
+	// Fetch one extra row to learn whether another page exists.
+	q := url.Values{
+		"user_id": {"eq." + userID},
+		"order":   {"last_active.desc"},
+		"limit":   {strconv.Itoa(int(limit) + 1)},
+		"offset":  {strconv.Itoa(int(offset))},
+	}
 	var rows []sessionRow
 	if err := c.do(ctx, http.MethodGet, "/rest/v1/agent_sessions", q, nil, "", &rows); err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	hasMore := len(rows) > int(limit)
+	if hasMore {
+		rows = rows[:limit]
 	}
 	sessions := make([]session.Session, 0, len(rows))
 	for _, r := range rows {
 		sessions = append(sessions, r.toSession())
 	}
-	return sessions, nil
+	return sessions, hasMore, nil
 }
 
 func (c *Client) EndSession(ctx context.Context, id string, endedAt time.Time) error {
@@ -175,15 +186,69 @@ func (c *Client) AppendMessages(ctx context.Context, sessionID string, msgs []se
 	return out, nil
 }
 
-func (c *Client) GetMessages(ctx context.Context, sessionID string) ([]session.Message, error) {
-	q := url.Values{"session_id": {"eq." + sessionID}, "order": {"seq.asc"}}
+func (c *Client) GetMessages(ctx context.Context, sessionID string, beforeSeq, limit int32) ([]session.Message, bool, error) {
+	q := url.Values{"session_id": {"eq." + sessionID}}
+	if limit > 0 {
+		// Latest window: fetch limit+1 rows below beforeSeq, newest first, so
+		// the extra row tells us older messages exist before the window.
+		if beforeSeq > 0 {
+			q.Set("seq", "lt."+strconv.Itoa(int(beforeSeq)))
+		}
+		q.Set("order", "seq.desc")
+		q.Set("limit", strconv.Itoa(int(limit)+1))
+	} else {
+		q.Set("order", "seq.asc")
+	}
 	var rows []messageRow
 	if err := c.do(ctx, http.MethodGet, "/rest/v1/agent_messages", q, nil, "", &rows); err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	hasMore := false
+	if limit > 0 {
+		hasMore = len(rows) > int(limit)
+		if hasMore {
+			rows = rows[:limit]
+		}
+		// Back to ascending seq for the caller.
+		for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+			rows[i], rows[j] = rows[j], rows[i]
+		}
 	}
 	msgs := make([]session.Message, 0, len(rows))
 	for _, r := range rows {
 		msgs = append(msgs, r.toMessage())
 	}
-	return msgs, nil
+	return msgs, hasMore, nil
+}
+
+func (c *Client) DeleteSession(ctx context.Context, id string) error {
+	// Messages first so no orphans are left if the session delete fails.
+	if err := c.do(ctx, http.MethodDelete, "/rest/v1/agent_messages", url.Values{"session_id": {"eq." + id}}, nil, "", nil); err != nil {
+		return err
+	}
+	q := url.Values{"id": {"eq." + id}}
+	var rows []sessionRow
+	if err := c.do(ctx, http.MethodDelete, "/rest/v1/agent_sessions", q, nil, "return=representation", &rows); err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return session.ErrNotFound
+	}
+	return nil
+}
+
+func (c *Client) ListEndedBefore(ctx context.Context, cutoff time.Time) ([]session.Session, error) {
+	q := url.Values{
+		"status":   {"eq.ended"},
+		"ended_at": {"lt." + cutoff.UTC().Format(time.RFC3339)},
+	}
+	var rows []sessionRow
+	if err := c.do(ctx, http.MethodGet, "/rest/v1/agent_sessions", q, nil, "", &rows); err != nil {
+		return nil, err
+	}
+	sessions := make([]session.Session, 0, len(rows))
+	for _, r := range rows {
+		sessions = append(sessions, r.toSession())
+	}
+	return sessions, nil
 }

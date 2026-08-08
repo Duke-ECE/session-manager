@@ -23,23 +23,29 @@ Defined in the [`Duke-ECE/protos`](https://github.com/Duke-ECE/protos) repo
 - `CreateSession(user_id, llm_model?) → Session` — id is server-generated
   (`sess-<16 hex>`), status `active`
 - `GetSession(session_id, user_id) → Session` — ownership enforced
-- `ListSessions(user_id) → [Session]` — only this user's sessions
+- `ListSessions(user_id, limit?, offset?) → [Session], has_more` — only this
+  user's sessions, most recently active first; `limit` 0 = server default 50
+  (cap 200), `has_more` is true when another page exists
 - `EndSession(session_id, user_id)` — sets `status='ended'`, `ended_at=now`
+- `DeleteSession(session_id, user_id)` — ownership enforced like EndSession;
+  deletes the session and all of its messages, in any status
 - `AppendTurn(session_id, user_id, messages)` — runtime write-through after a
   completed Chat turn; `seq` is assigned by the server (`max(seq)+1…`)
-- `SetTitle(session_id, title) → Session` — runtime-internal display title;
-  trimmed, non-empty, capped at 120 chars; settable on ended sessions
-- `GetTranscript(session_id, user_id?) → [TurnMessage]` — full transcript
-  ordered by seq
+- `SetTitle(session_id, title, user_id?) → Session` — display title; trimmed,
+  non-empty, capped at 120 chars; settable on ended sessions
+- `GetTranscript(session_id, user_id?, limit?, before_seq?) → [TurnMessage],
+  has_more` — `limit` 0 = full transcript (legacy); `limit` > 0 returns the
+  up-to-`limit` messages with `seq < before_seq` (`before_seq` 0 = the latest
+  ones), ascending, with `has_more` true when older messages exist (cap 1000)
 
 ### Privilege model
 
 | RPC | Rule |
 |---|---|
-| `CreateSession` / `GetSession` / `ListSessions` / `EndSession` | `user_id` required (`INVALID_ARGUMENT`); row owner mismatch → `PERMISSION_DENIED`; missing row → `NOT_FOUND` |
+| `CreateSession` / `GetSession` / `ListSessions` / `EndSession` / `DeleteSession` | `user_id` required (`INVALID_ARGUMENT`); row owner mismatch → `PERMISSION_DENIED`; missing row → `NOT_FOUND` |
 | `GetTranscript` | session owner passes with just `user_id`; a non-empty non-owner `user_id` → `PERMISSION_DENIED`; with no `user_id` (e.g. runtime hydration) the service token decides |
 | `AppendTurn` | service token always required (trusted runtime callers only; `user_id` is carried for auditing) |
-| `SetTitle` | service token always required (runtime-internal; metadata, so settable on ended sessions) |
+| `SetTitle` | same owner-or-token pattern as `GetTranscript` (owner `user_id`, or service token for runtime auto-titles); metadata, so settable on ended sessions |
 
 The service token is compared against the `x-service-token` gRPC metadata
 header; a missing/wrong token is `UNAUTHENTICATED`. If `SERVICE_TOKEN` is
@@ -55,6 +61,7 @@ Server reflection is enabled for `grpcurl`.
 | `SUPABASE_URL` | — | Supabase project URL (required) |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | service role key for PostgREST (required, never logged) |
 | `SERVICE_TOKEN` | — | shared token for runtime-internal RPCs |
+| `RETENTION_DAYS` | `0` | retention janitor: daily sweep deletes ended sessions (and their messages) whose `ended_at` is older than this many days; 0/unset = disabled |
 
 ## Database
 

@@ -38,6 +38,8 @@ spec:
                 secretKeyRef:
                   name: session-service-token
                   key: token
+            - name: RETENTION_DAYS
+              value: "30"
 ---
 apiVersion: v1
 kind: Service

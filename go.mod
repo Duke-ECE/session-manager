@@ -3,7 +3,7 @@ module github.com/Duke-ECE/session-manager
 go 1.25.5
 
 require (
-	github.com/Duke-ECE/protos v0.6.0
+	github.com/Duke-ECE/protos v0.7.0
 	google.golang.org/grpc v1.82.1
 )
 

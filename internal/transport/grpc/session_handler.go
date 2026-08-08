@@ -40,11 +40,11 @@ func (h *SessionHandler) GetSession(ctx context.Context, req *v1.GetSessionReque
 }
 
 func (h *SessionHandler) ListSessions(ctx context.Context, req *v1.ListSessionsRequest) (*v1.ListSessionsResponse, error) {
-	sessions, err := h.svc.ListSessions(ctx, req.GetUserId())
+	sessions, hasMore, err := h.svc.ListSessions(ctx, req.GetUserId(), req.GetLimit(), req.GetOffset())
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	resp := &v1.ListSessionsResponse{}
+	resp := &v1.ListSessionsResponse{HasMore: hasMore}
 	for _, sess := range sessions {
 		resp.Sessions = append(resp.Sessions, toProtoSession(sess))
 	}
@@ -56,6 +56,13 @@ func (h *SessionHandler) EndSession(ctx context.Context, req *v1.EndSessionReque
 		return nil, toStatus(err)
 	}
 	return &v1.EndSessionResponse{}, nil
+}
+
+func (h *SessionHandler) DeleteSession(ctx context.Context, req *v1.DeleteSessionRequest) (*v1.DeleteSessionResponse, error) {
+	if err := h.svc.DeleteSession(ctx, req.GetSessionId(), req.GetUserId()); err != nil {
+		return nil, toStatus(err)
+	}
+	return &v1.DeleteSessionResponse{}, nil
 }
 
 func (h *SessionHandler) AppendTurn(ctx context.Context, req *v1.AppendTurnRequest) (*v1.AppendTurnResponse, error) {
@@ -70,7 +77,7 @@ func (h *SessionHandler) AppendTurn(ctx context.Context, req *v1.AppendTurnReque
 }
 
 func (h *SessionHandler) SetTitle(ctx context.Context, req *v1.SetTitleRequest) (*v1.SetTitleResponse, error) {
-	sess, err := h.svc.SetTitle(ctx, req.GetSessionId(), req.GetTitle(), presentedTokens(ctx))
+	sess, err := h.svc.SetTitle(ctx, req.GetSessionId(), req.GetTitle(), req.GetUserId(), presentedTokens(ctx))
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -78,11 +85,11 @@ func (h *SessionHandler) SetTitle(ctx context.Context, req *v1.SetTitleRequest) 
 }
 
 func (h *SessionHandler) GetTranscript(ctx context.Context, req *v1.GetTranscriptRequest) (*v1.GetTranscriptResponse, error) {
-	msgs, err := h.svc.GetTranscript(ctx, req.GetSessionId(), req.GetUserId(), presentedTokens(ctx))
+	msgs, hasMore, err := h.svc.GetTranscript(ctx, req.GetSessionId(), req.GetUserId(), presentedTokens(ctx), req.GetBeforeSeq(), req.GetLimit())
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	resp := &v1.GetTranscriptResponse{}
+	resp := &v1.GetTranscriptResponse{HasMore: hasMore}
 	for _, m := range msgs {
 		resp.Messages = append(resp.Messages, &v1.TurnMessage{
 			Seq:         m.Seq,

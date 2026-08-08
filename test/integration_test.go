@@ -327,8 +327,8 @@ func TestSetTitle(t *testing.T) {
 }
 
 // fakeSupabase is a minimal in-memory PostgREST stand-in: it understands
-// eq-filters, select projections, order, limit, and Prefer:
-// return=representation for the two tables session-manager uses.
+// eq/lt filters, select projections, order, offset, limit, deletes, and
+// Prefer: return=representation for the two tables session-manager uses.
 type fakeSupabase struct {
 	mu       sync.Mutex
 	sessions []map[string]any
@@ -373,7 +373,10 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 		rows := f.sessions
 		rows = filterEq(rows, "id", r.URL.Query().Get("id"))
 		rows = filterEq(rows, "user_id", r.URL.Query().Get("user_id"))
+		rows = filterEq(rows, "status", r.URL.Query().Get("status"))
+		rows = filterLt(rows, "ended_at", r.URL.Query().Get("ended_at"))
 		rows = applyOrder(rows, r.URL.Query().Get("order"))
+		rows = applyOffset(rows, r.URL.Query().Get("offset"))
 		writeJSON(w, applyLimit(rows, r.URL.Query().Get("limit")))
 	case http.MethodPatch:
 		var patch map[string]any
@@ -392,6 +395,19 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, updated)
+	case http.MethodDelete:
+		var deleted []map[string]any
+		id, _ := strings.CutPrefix(r.URL.Query().Get("id"), "eq.")
+		kept := f.sessions[:0]
+		for _, row := range f.sessions {
+			if row["id"] == id {
+				deleted = append(deleted, row)
+			} else {
+				kept = append(kept, row)
+			}
+		}
+		f.sessions = kept
+		writeJSON(w, deleted)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -413,9 +429,21 @@ func (f *fakeSupabase) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, rows)
 	case http.MethodGet:
 		rows := filterEq(f.messages, "session_id", r.URL.Query().Get("session_id"))
+		rows = filterLt(rows, "seq", r.URL.Query().Get("seq"))
 		rows = applyOrder(rows, r.URL.Query().Get("order"))
+		rows = applyOffset(rows, r.URL.Query().Get("offset"))
 		rows = applyLimit(rows, r.URL.Query().Get("limit"))
 		writeJSON(w, applySelect(rows, r.URL.Query().Get("select")))
+	case http.MethodDelete:
+		sessionID, _ := strings.CutPrefix(r.URL.Query().Get("session_id"), "eq.")
+		kept := f.messages[:0]
+		for _, row := range f.messages {
+			if row["session_id"] != sessionID {
+				kept = append(kept, row)
+			}
+		}
+		f.messages = kept
+		writeJSON(w, []map[string]any{})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -430,6 +458,32 @@ func filterEq(rows []map[string]any, col, param string) []map[string]any {
 	var out []map[string]any
 	for _, row := range rows {
 		if row[col] == val {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// filterLt keeps rows whose column is below an "lt.<value>" filter param,
+// comparing JSON numbers numerically and anything else as strings (RFC 3339
+// timestamps sort chronologically).
+func filterLt(rows []map[string]any, col, param string) []map[string]any {
+	val, ok := strings.CutPrefix(param, "lt.")
+	if !ok {
+		return rows
+	}
+	var num float64
+	isNum := false
+	if n, err := strconv.ParseFloat(val, 64); err == nil {
+		num, isNum = n, true
+	}
+	var out []map[string]any
+	for _, row := range rows {
+		if isNum {
+			if fv, ok := row[col].(float64); ok && fv < num {
+				out = append(out, row)
+			}
+		} else if s, ok := row[col].(string); ok && s < val {
 			out = append(out, row)
 		}
 	}
@@ -487,6 +541,18 @@ func compareValues(a, b any) int {
 		}
 	}
 	return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+}
+
+// applyOffset drops the first n rows, like PostgREST's offset param.
+func applyOffset(rows []map[string]any, offset string) []map[string]any {
+	n, err := strconv.Atoi(offset)
+	if err != nil || n <= 0 {
+		return rows
+	}
+	if n >= len(rows) {
+		return []map[string]any{}
+	}
+	return rows[n:]
 }
 
 func applyLimit(rows []map[string]any, limit string) []map[string]any {

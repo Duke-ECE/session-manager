@@ -43,12 +43,28 @@ func (s *Service) GetSession(ctx context.Context, sessionID, userID string) (Ses
 	return s.ownedSession(ctx, sessionID, userID)
 }
 
-// ListSessions returns all of userID's sessions.
-func (s *Service) ListSessions(ctx context.Context, userID string) ([]Session, error) {
+// ListSessions pagination bounds: limit 0 means the default page size;
+// anything above the cap is clamped to it.
+const (
+	defaultListLimit = 50
+	maxListLimit     = 200
+)
+
+// ListSessions returns one page of userID's sessions, most recently active
+// first, and whether another page exists after it.
+func (s *Service) ListSessions(ctx context.Context, userID string, limit, offset int32) ([]Session, bool, error) {
 	if userID == "" {
-		return nil, invalidArgument("user_id is required")
+		return nil, false, invalidArgument("user_id is required")
 	}
-	return s.store.ListSessions(ctx, userID)
+	if limit <= 0 {
+		limit = defaultListLimit
+	} else if limit > maxListLimit {
+		limit = maxListLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.store.ListSessions(ctx, userID, limit, offset)
 }
 
 // EndSession marks the session ended; ending an already-ended session is a
@@ -62,6 +78,17 @@ func (s *Service) EndSession(ctx context.Context, sessionID, userID string) erro
 		return nil
 	}
 	return s.store.EndSession(ctx, sess.ID, time.Now())
+}
+
+// DeleteSession removes the session and its whole transcript. Ownership is
+// enforced like EndSession; deletion is allowed in any status — active or
+// ended.
+func (s *Service) DeleteSession(ctx context.Context, sessionID, userID string) error {
+	sess, err := s.ownedSession(ctx, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	return s.store.DeleteSession(ctx, sess.ID)
 }
 
 // AppendTurn appends one completed turn's messages to the transcript. It is
@@ -96,13 +123,12 @@ func (s *Service) AppendTurn(ctx context.Context, sessionID string, msgs []Messa
 const maxTitleLen = 120
 
 // SetTitle sets the session's display title (e.g. an LLM-generated summary
-// of the first turn). It is runtime-internal like AppendTurn: a valid
-// service token is always required. A title is metadata, not transcript, so
-// it stays settable on ended sessions and never bumps last_active.
-func (s *Service) SetTitle(ctx context.Context, sessionID, title string, tokens []string) (Session, error) {
-	if !s.tokenOK(tokens) {
-		return Session{}, unauthenticated("valid x-service-token metadata is required")
-	}
+// of the first turn, or a user rename). It follows GetTranscript's
+// owner-or-token pattern: the owner passes with just userID, a non-empty
+// non-owner userID is PermissionDenied, and with no user identity the
+// service token decides. A title is metadata, not transcript, so it stays
+// settable on ended sessions and never bumps last_active.
+func (s *Service) SetTitle(ctx context.Context, sessionID, title, userID string, tokens []string) (Session, error) {
 	if sessionID == "" {
 		return Session{}, invalidArgument("session_id is required")
 	}
@@ -113,29 +139,56 @@ func (s *Service) SetTitle(ctx context.Context, sessionID, title string, tokens 
 	if r := []rune(title); len(r) > maxTitleLen {
 		title = string(r[:maxTitleLen])
 	}
-	return s.store.SetTitle(ctx, sessionID, title)
-}
-
-// GetTranscript returns the full transcript. The owner reads freely. A
-// non-empty non-owner userID is an authenticated cross-user access →
-// PermissionDenied. With no user identity at all (e.g. runtime hydration),
-// the service token decides.
-func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, tokens []string) ([]Message, error) {
-	if sessionID == "" {
-		return nil, invalidArgument("session_id is required")
-	}
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return Session{}, err
 	}
 	if userID != "" {
 		if userID != sess.UserID {
-			return nil, permissionDenied("session belongs to another user")
+			return Session{}, permissionDenied("session belongs to another user")
 		}
 	} else if !s.tokenOK(tokens) {
-		return nil, unauthenticated("owner user_id or valid x-service-token metadata is required")
+		return Session{}, unauthenticated("owner user_id or valid x-service-token metadata is required")
 	}
-	return s.store.GetMessages(ctx, sess.ID)
+	return s.store.SetTitle(ctx, sessionID, title)
+}
+
+// maxTranscriptLimit caps windowed GetTranscript pages; limit 0 means the
+// full transcript (legacy behavior).
+const maxTranscriptLimit = 1000
+
+// GetTranscript returns transcript messages in ascending seq order. The
+// owner reads freely. A non-empty non-owner userID is an authenticated
+// cross-user access → PermissionDenied. With no user identity at all (e.g.
+// runtime hydration), the service token decides. With limit = 0 the full
+// transcript is returned (hasMore always false); with limit > 0 the latest
+// window — the up to limit messages with seq < beforeSeq (beforeSeq = 0
+// means "from the end") — and hasMore true when older messages exist before
+// the window.
+func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, tokens []string, beforeSeq, limit int32) ([]Message, bool, error) {
+	if sessionID == "" {
+		return nil, false, invalidArgument("session_id is required")
+	}
+	if limit < 0 {
+		limit = 0
+	} else if limit > maxTranscriptLimit {
+		limit = maxTranscriptLimit
+	}
+	if beforeSeq < 0 {
+		beforeSeq = 0
+	}
+	sess, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, false, err
+	}
+	if userID != "" {
+		if userID != sess.UserID {
+			return nil, false, permissionDenied("session belongs to another user")
+		}
+	} else if !s.tokenOK(tokens) {
+		return nil, false, unauthenticated("owner user_id or valid x-service-token metadata is required")
+	}
+	return s.store.GetMessages(ctx, sess.ID, beforeSeq, limit)
 }
 
 // ownedSession validates the user-scoped preconditions and returns the

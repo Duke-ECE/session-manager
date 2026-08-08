@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/Duke-ECE/session-manager/internal/infrastructure/postgrest"
@@ -26,9 +28,24 @@ func main() {
 	if port == "" {
 		port = "50053"
 	}
+	retentionDays := 0
+	if v := os.Getenv("RETENTION_DAYS"); v != "" {
+		var err error
+		retentionDays, err = strconv.Atoi(v)
+		if err != nil {
+			log.Fatalf("RETENTION_DAYS=%q is not an integer", v)
+		}
+	}
 
 	st := postgrest.NewClient(supabaseURL, serviceKey, nil)
 	svc := session.NewService(st, serviceToken)
+
+	ctx, stopJanitor := context.WithCancel(context.Background())
+	defer stopJanitor()
+	if j := session.NewJanitor(st, retentionDays); j != nil {
+		log.Printf("retention janitor enabled: ended sessions older than %d days are swept daily", retentionDays)
+		go j.Run(ctx)
+	}
 
 	addr := ":" + port
 	lis, err := net.Listen("tcp", addr)
@@ -49,5 +66,6 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	log.Println("shutting down")
+	stopJanitor()
 	s.GracefulStop()
 }

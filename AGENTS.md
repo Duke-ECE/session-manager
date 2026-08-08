@@ -23,8 +23,11 @@ Repo-specific:
   (`internal/infrastructure/postgrest`), tables
   `agent_sessions` / `agent_messages` — RLS on, no policies, service role only.
 - Privilege: user-scoped RPCs enforce ownership (`PERMISSION_DENIED`);
-  `AppendTurn` / `SetTitle` / token-only `GetTranscript` require
-  `x-service-token`.
+  `AppendTurn` requires `x-service-token`; `GetTranscript` / `SetTitle`
+  follow the owner-or-token pattern (owner `user_id` or service token).
+- Retention: `RETENTION_DAYS` > 0 starts a janitor (`internal/session/janitor.go`,
+  sweep on startup + every 24h) deleting ended sessions older than the cutoff
+  and their messages; 0/unset = disabled.
 - Migrations live in `supabase/migrations/` with **timestamped** versions —
   several repos share this Supabase project; counters collide.
 - Manual check: `grpcurl -plaintext localhost:50053 list`.

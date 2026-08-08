@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,14 @@ const testToken = "test-service-token"
 // checks, PostgREST query building — without a database.
 func newTestClient(t *testing.T, serviceToken string) v1.SessionServiceClient {
 	t.Helper()
+	c, _ := newTestClientWithFake(t, serviceToken)
+	return c
+}
+
+// newTestClientWithFake additionally returns the fake Supabase so tests can
+// inspect raw rows (e.g. that deletes really removed messages).
+func newTestClientWithFake(t *testing.T, serviceToken string) (v1.SessionServiceClient, *fakeSupabase) {
+	t.Helper()
 
 	fake := newFakeSupabase()
 	ts := httptest.NewServer(fake)
@@ -56,7 +65,7 @@ func newTestClient(t *testing.T, serviceToken string) v1.SessionServiceClient {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	return v1.NewSessionServiceClient(conn)
+	return v1.NewSessionServiceClient(conn), fake
 }
 
 func tokenCtx(ctx context.Context, token string) context.Context {
@@ -489,9 +498,249 @@ func TestGetTranscriptNonOwner(t *testing.T) {
 	}
 }
 
+func TestListSessionsPagination(t *testing.T) {
+	c := newTestClient(t, testToken)
+	var ids []string
+	for range 7 {
+		ids = append(ids, mustCreate(t, c, "user-a").GetId())
+	}
+	mustCreate(t, c, "user-b") // never listed
+
+	page := func(limit, offset int32) *v1.ListSessionsResponse {
+		t.Helper()
+		resp, err := c.ListSessions(context.Background(), &v1.ListSessionsRequest{UserId: "user-a", Limit: limit, Offset: offset})
+		if err != nil {
+			t.Fatalf("ListSessions(limit=%d, offset=%d): %v", limit, offset, err)
+		}
+		return resp
+	}
+
+	// Walk the pages: 3 + 3 + 1, has_more true until the last page.
+	var walked []string
+	p1 := page(3, 0)
+	if len(p1.GetSessions()) != 3 || !p1.GetHasMore() {
+		t.Errorf("page 1: %d sessions, has_more=%t; want 3, true", len(p1.GetSessions()), p1.GetHasMore())
+	}
+	p2 := page(3, 3)
+	if len(p2.GetSessions()) != 3 || !p2.GetHasMore() {
+		t.Errorf("page 2: %d sessions, has_more=%t; want 3, true", len(p2.GetSessions()), p2.GetHasMore())
+	}
+	p3 := page(3, 6)
+	if len(p3.GetSessions()) != 1 || p3.GetHasMore() {
+		t.Errorf("page 3: %d sessions, has_more=%t; want 1, false", len(p3.GetSessions()), p3.GetHasMore())
+	}
+	for _, p := range []*v1.ListSessionsResponse{p1, p2, p3} {
+		for _, s := range p.GetSessions() {
+			walked = append(walked, s.GetId())
+		}
+	}
+	// Same-second last_active ties keep creation order; the walk covers all
+	// seven exactly once, in order.
+	if strings.Join(walked, ",") != strings.Join(ids, ",") {
+		t.Errorf("walked order = %v, want creation order %v", walked, ids)
+	}
+
+	// An offset past the end returns an empty page, not an error.
+	if resp := page(3, 100); len(resp.GetSessions()) != 0 || resp.GetHasMore() {
+		t.Errorf("offset past end: %d sessions, has_more=%t; want 0, false", len(resp.GetSessions()), resp.GetHasMore())
+	}
+}
+
+func TestListSessionsDefaultAndCap(t *testing.T) {
+	c := newTestClient(t, testToken)
+	for range 205 {
+		mustCreate(t, c, "user-a")
+	}
+	list := func(limit, offset int32) *v1.ListSessionsResponse {
+		t.Helper()
+		resp, err := c.ListSessions(context.Background(), &v1.ListSessionsRequest{UserId: "user-a", Limit: limit, Offset: offset})
+		if err != nil {
+			t.Fatalf("ListSessions(limit=%d, offset=%d): %v", limit, offset, err)
+		}
+		return resp
+	}
+
+	// limit 0 = server default 50.
+	if resp := list(0, 0); len(resp.GetSessions()) != 50 || !resp.GetHasMore() {
+		t.Errorf("default page: %d sessions, has_more=%t; want 50, true", len(resp.GetSessions()), resp.GetHasMore())
+	}
+	// Limit is capped at 200.
+	if resp := list(1000, 0); len(resp.GetSessions()) != 200 || !resp.GetHasMore() {
+		t.Errorf("capped page: %d sessions, has_more=%t; want 200, true", len(resp.GetSessions()), resp.GetHasMore())
+	}
+	// The remaining 5 sit behind the cap.
+	if resp := list(1000, 200); len(resp.GetSessions()) != 5 || resp.GetHasMore() {
+		t.Errorf("tail page: %d sessions, has_more=%t; want 5, false", len(resp.GetSessions()), resp.GetHasMore())
+	}
+}
+
+func TestGetTranscriptWindows(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+	ctx := context.Background()
+
+	msgs := make([]*v1.TurnMessage, 0, 10)
+	for i := 1; i <= 10; i++ {
+		msgs = append(msgs, &v1.TurnMessage{Role: "user", ContentJson: fmt.Sprintf(`{"n":%d}`, i)})
+	}
+	if _, err := c.AppendTurn(tokenCtx(ctx, testToken), &v1.AppendTurnRequest{SessionId: sess.GetId(), UserId: "user-a", Messages: msgs}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+
+	window := func(beforeSeq, limit int32) ([]int32, bool) {
+		t.Helper()
+		resp, err := c.GetTranscript(ctx, &v1.GetTranscriptRequest{
+			SessionId: sess.GetId(), UserId: "user-a", BeforeSeq: beforeSeq, Limit: limit,
+		})
+		if err != nil {
+			t.Fatalf("GetTranscript(before_seq=%d, limit=%d): %v", beforeSeq, limit, err)
+		}
+		var seqs []int32
+		for _, m := range resp.GetMessages() {
+			seqs = append(seqs, m.GetSeq())
+		}
+		return seqs, resp.GetHasMore()
+	}
+	wantSeqs := func(got []int32, want ...int32) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Errorf("seqs = %v, want %v", got, want)
+			return
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("seqs = %v, want %v (ascending)", got, want)
+				return
+			}
+		}
+	}
+
+	// Walk backwards through the transcript in windows of 4: the latest
+	// window, then the ones before it, ascending inside each window.
+	seqs, hasMore := window(0, 4)
+	wantSeqs(seqs, 7, 8, 9, 10)
+	if !hasMore {
+		t.Errorf("latest window: has_more = false, want true (older messages exist)")
+	}
+	seqs, hasMore = window(7, 4)
+	wantSeqs(seqs, 3, 4, 5, 6)
+	if !hasMore {
+		t.Errorf("middle window: has_more = false, want true")
+	}
+	seqs, hasMore = window(3, 4)
+	wantSeqs(seqs, 1, 2)
+	if hasMore {
+		t.Errorf("oldest window: has_more = true, want false (start of transcript)")
+	}
+
+	// limit = 0: legacy full transcript, has_more always false.
+	seqs, hasMore = window(0, 0)
+	wantSeqs(seqs, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+	if hasMore {
+		t.Errorf("full transcript: has_more = true, want false")
+	}
+
+	// Limit is capped at 1000 — far above this transcript, so still full.
+	seqs, hasMore = window(0, 5000)
+	wantSeqs(seqs, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+	if hasMore {
+		t.Errorf("capped window: has_more = true, want false")
+	}
+}
+
+func TestDeleteSession(t *testing.T) {
+	c, fake := newTestClientWithFake(t, testToken)
+	ctx := context.Background()
+	sess := mustCreate(t, c, "user-a")
+	if _, err := c.AppendTurn(tokenCtx(ctx, testToken), &v1.AppendTurnRequest{
+		SessionId: sess.GetId(),
+		UserId:    "user-a",
+		Messages:  []*v1.TurnMessage{{Role: "user", ContentJson: `{"text":"hi"}`}},
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+
+	// A foreign user cannot delete it.
+	_, err := c.DeleteSession(ctx, &v1.DeleteSessionRequest{SessionId: sess.GetId(), UserId: "user-b"})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("non-owner: code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+	// A missing session is NotFound.
+	_, err = c.DeleteSession(ctx, &v1.DeleteSessionRequest{SessionId: "sess-nope", UserId: "user-a"})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("missing: code = %v, want NotFound (err=%v)", status.Code(err), err)
+	}
+
+	// The owner deletes an active session: row and all messages are gone.
+	if _, err := c.DeleteSession(ctx, &v1.DeleteSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if _, err := c.GetSession(ctx, &v1.GetSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); status.Code(err) != codes.NotFound {
+		t.Errorf("GetSession after delete: code = %v, want NotFound", status.Code(err))
+	}
+	if got := fake.messageCount(sess.GetId()); got != 0 {
+		t.Errorf("messages left after delete = %d, want 0", got)
+	}
+	// Deleting again is NotFound.
+	if _, err := c.DeleteSession(ctx, &v1.DeleteSessionRequest{SessionId: sess.GetId(), UserId: "user-a"}); status.Code(err) != codes.NotFound {
+		t.Errorf("second delete: code = %v, want NotFound", status.Code(err))
+	}
+
+	// Deletion is allowed in any status — an ended session deletes the same.
+	ended := mustCreate(t, c, "user-a")
+	if _, err := c.EndSession(ctx, &v1.EndSessionRequest{SessionId: ended.GetId(), UserId: "user-a"}); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+	if _, err := c.DeleteSession(ctx, &v1.DeleteSessionRequest{SessionId: ended.GetId(), UserId: "user-a"}); err != nil {
+		t.Errorf("DeleteSession on ended session: %v", err)
+	}
+}
+
+func TestSetTitleOwnerPath(t *testing.T) {
+	c := newTestClient(t, testToken)
+	sess := mustCreate(t, c, "user-a")
+
+	// The owner sets the title with just user_id — no token needed.
+	resp, err := c.SetTitle(context.Background(), &v1.SetTitleRequest{
+		SessionId: sess.GetId(), Title: "owner rename", UserId: "user-a",
+	})
+	if err != nil {
+		t.Fatalf("SetTitle as owner: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "owner rename" {
+		t.Errorf("title = %q, want %q", resp.GetSession().GetTitle(), "owner rename")
+	}
+
+	// A non-empty non-owner user_id is PermissionDenied — with or without a
+	// valid token, mirroring GetTranscript's owner-or-token pattern.
+	for _, c2 := range []context.Context{context.Background(), tokenCtx(context.Background(), testToken)} {
+		_, err := c.SetTitle(c2, &v1.SetTitleRequest{SessionId: sess.GetId(), Title: "hijack", UserId: "user-b"})
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("non-owner: code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+		}
+	}
+
+	// The service-token path (runtime auto-titles) still works.
+	resp, err = c.SetTitle(tokenCtx(context.Background(), testToken), &v1.SetTitleRequest{
+		SessionId: sess.GetId(), Title: "auto title",
+	})
+	if err != nil {
+		t.Fatalf("SetTitle with token: %v", err)
+	}
+	if resp.GetSession().GetTitle() != "auto title" {
+		t.Errorf("title = %q, want %q", resp.GetSession().GetTitle(), "auto title")
+	}
+
+	// Neither owner nor token is Unauthenticated.
+	_, err = c.SetTitle(context.Background(), &v1.SetTitleRequest{SessionId: sess.GetId(), Title: "anon"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("no identity no token: code = %v, want Unauthenticated (err=%v)", status.Code(err), err)
+	}
+}
+
 // fakeSupabase is a minimal in-memory PostgREST stand-in: it understands
-// eq-filters, select projections, order, limit, and return=representation
-// for the two tables session-manager uses.
+// eq/lt filters, select projections, order, offset, limit, deletes, and
+// return=representation for the two tables session-manager uses.
 type fakeSupabase struct {
 	mu       sync.Mutex
 	sessions []map[string]any
@@ -500,6 +749,19 @@ type fakeSupabase struct {
 
 func newFakeSupabase() *fakeSupabase {
 	return &fakeSupabase{}
+}
+
+// messageCount reports how many message rows remain for sessionID.
+func (f *fakeSupabase) messageCount(sessionID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, row := range f.messages {
+		if row["session_id"] == sessionID {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeSupabase) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -535,6 +797,10 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 		rows := f.sessions
 		rows = filterEq(rows, "id", r.URL.Query().Get("id"))
 		rows = filterEq(rows, "user_id", r.URL.Query().Get("user_id"))
+		rows = filterEq(rows, "status", r.URL.Query().Get("status"))
+		rows = filterLt(rows, "ended_at", r.URL.Query().Get("ended_at"))
+		rows = applyOrder(rows, r.URL.Query().Get("order"))
+		rows = applyOffset(rows, r.URL.Query().Get("offset"))
 		writeJSON(w, applyLimit(rows, r.URL.Query().Get("limit")))
 	case http.MethodPatch:
 		var patch map[string]any
@@ -553,6 +819,19 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, updated)
+	case http.MethodDelete:
+		var deleted []map[string]any
+		id, _ := strings.CutPrefix(r.URL.Query().Get("id"), "eq.")
+		kept := f.sessions[:0]
+		for _, row := range f.sessions {
+			if row["id"] == id {
+				deleted = append(deleted, row)
+			} else {
+				kept = append(kept, row)
+			}
+		}
+		f.sessions = kept
+		writeJSON(w, deleted)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -574,9 +853,21 @@ func (f *fakeSupabase) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, rows)
 	case http.MethodGet:
 		rows := filterEq(f.messages, "session_id", r.URL.Query().Get("session_id"))
+		rows = filterLt(rows, "seq", r.URL.Query().Get("seq"))
 		rows = applyOrder(rows, r.URL.Query().Get("order"))
+		rows = applyOffset(rows, r.URL.Query().Get("offset"))
 		rows = applyLimit(rows, r.URL.Query().Get("limit"))
 		writeJSON(w, applySelect(rows, r.URL.Query().Get("select")))
+	case http.MethodDelete:
+		sessionID, _ := strings.CutPrefix(r.URL.Query().Get("session_id"), "eq.")
+		kept := f.messages[:0]
+		for _, row := range f.messages {
+			if row["session_id"] != sessionID {
+				kept = append(kept, row)
+			}
+		}
+		f.messages = kept
+		writeJSON(w, []map[string]any{})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -591,6 +882,32 @@ func filterEq(rows []map[string]any, col, param string) []map[string]any {
 	var out []map[string]any
 	for _, row := range rows {
 		if row[col] == val {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// filterLt keeps rows whose column is below an "lt.<value>" filter param,
+// comparing JSON numbers numerically and anything else as strings (RFC 3339
+// timestamps sort chronologically).
+func filterLt(rows []map[string]any, col, param string) []map[string]any {
+	val, ok := strings.CutPrefix(param, "lt.")
+	if !ok {
+		return rows
+	}
+	var num float64
+	isNum := false
+	if n, err := strconv.ParseFloat(val, 64); err == nil {
+		num, isNum = n, true
+	}
+	var out []map[string]any
+	for _, row := range rows {
+		if isNum {
+			if fv, ok := row[col].(float64); ok && fv < num {
+				out = append(out, row)
+			}
+		} else if s, ok := row[col].(string); ok && s < val {
 			out = append(out, row)
 		}
 	}
@@ -616,8 +933,9 @@ func applySelect(rows []map[string]any, sel string) []map[string]any {
 	return out
 }
 
-// applyOrder sorts by "col.asc"/"col.desc"; seq is the only column ordered
-// on in practice.
+// applyOrder sorts by "col.asc"/"col.desc", comparing JSON numbers
+// numerically (seq) and anything else as strings (RFC 3339 timestamps sort
+// chronologically).
 func applyOrder(rows []map[string]any, order string) []map[string]any {
 	col, dir, _ := strings.Cut(order, ".")
 	if col == "" {
@@ -625,13 +943,40 @@ func applyOrder(rows []map[string]any, order string) []map[string]any {
 	}
 	out := append([]map[string]any(nil), rows...)
 	sort.SliceStable(out, func(i, j int) bool {
-		less := asInt(out[i][col]) < asInt(out[j][col])
+		less := compareValues(out[i][col], out[j][col]) < 0
 		if dir == "desc" {
-			return !less
+			return compareValues(out[i][col], out[j][col]) > 0
 		}
 		return less
 	})
 	return out
+}
+
+func compareValues(a, b any) int {
+	if fa, ok := a.(float64); ok {
+		if fb, ok := b.(float64); ok {
+			switch {
+			case fa < fb:
+				return -1
+			case fa > fb:
+				return 1
+			}
+			return 0
+		}
+	}
+	return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
+}
+
+// applyOffset drops the first n rows, like PostgREST's offset param.
+func applyOffset(rows []map[string]any, offset string) []map[string]any {
+	n, err := strconv.Atoi(offset)
+	if err != nil || n <= 0 {
+		return rows
+	}
+	if n >= len(rows) {
+		return []map[string]any{}
+	}
+	return rows[n:]
 }
 
 func applyLimit(rows []map[string]any, limit string) []map[string]any {
@@ -640,17 +985,6 @@ func applyLimit(rows []map[string]any, limit string) []map[string]any {
 		return rows
 	}
 	return rows[:n]
-}
-
-// asInt reads a JSON-decoded number (float64) as an int for comparisons.
-func asInt(v any) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	}
-	return 0
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

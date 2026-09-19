@@ -15,7 +15,8 @@ import (
 var _ session.Store = (*Client)(nil)
 
 // sessionRow maps the agent_sessions table. JSON null decodes into Go
-// strings as a no-op, so nullable columns stay empty strings.
+// strings as a no-op, so nullable columns stay empty strings. The fields below
+// EndedAt are the durable-context (v2) columns.
 type sessionRow struct {
 	ID         string `json:"id"`
 	UserID     string `json:"user_id"`
@@ -26,6 +27,14 @@ type sessionRow struct {
 	CreatedAt  string `json:"created_at"`
 	LastActive string `json:"last_active"`
 	EndedAt    string `json:"ended_at"`
+
+	LastSeq                int64  `json:"last_seq"`
+	Revision               int64  `json:"revision"`
+	ActiveCheckpointID     string `json:"active_checkpoint_id"`
+	ActiveRequestMessageID string `json:"active_request_message_id"`
+	LeaseOwner             string `json:"lease_owner"`
+	LeaseGeneration        int64  `json:"lease_generation"`
+	LeaseExpiresAt         string `json:"lease_expires_at"`
 }
 
 func (r sessionRow) toSession() session.Session {
@@ -39,15 +48,39 @@ func (r sessionRow) toSession() session.Session {
 		CreatedAt:  r.CreatedAt,
 		LastActive: r.LastActive,
 		EndedAt:    r.EndedAt,
+
+		LastSeq:                r.LastSeq,
+		Revision:               r.Revision,
+		ActiveCheckpointID:     r.ActiveCheckpointID,
+		ActiveRequestMessageID: r.ActiveRequestMessageID,
+		LeaseOwner:             r.LeaseOwner,
+		LeaseGeneration:        r.LeaseGeneration,
+		LeaseExpiresAt:         r.LeaseExpiresAt,
 	}
 }
 
-// messageRow maps the agent_messages table.
+// messageRow maps the agent_messages table. The fields below CreatedAt are the
+// canonical-message (v2) columns; FormatVersion 0 marks a legacy v1 row.
 type messageRow struct {
 	Seq       int32           `json:"seq"`
 	Role      string          `json:"role"`
 	Content   json.RawMessage `json:"content"`
 	CreatedAt string          `json:"created_at"`
+
+	MessageID             string          `json:"message_id"`
+	RequestMessageID      string          `json:"request_message_id"`
+	FormatVersion         int32           `json:"format_version"`
+	MessageStatus         string          `json:"message_status"`
+	ReplyToMessageID      string          `json:"reply_to_message_id"`
+	Usage                 json.RawMessage `json:"usage"`
+	ProviderMetadata      json.RawMessage `json:"provider_metadata"`
+	ClientRequestID       string          `json:"client_request_id"`
+	RequestHash           string          `json:"request_hash"`
+	ExecutionStatus       string          `json:"execution_status"`
+	StartedAt             string          `json:"started_at"`
+	FinishedAt            string          `json:"finished_at"`
+	ErrorCode             string          `json:"error_code"`
+	CancellationRequested bool            `json:"cancellation_requested"`
 }
 
 func (r messageRow) toMessage() session.Message {
@@ -56,7 +89,31 @@ func (r messageRow) toMessage() session.Message {
 		Role:        r.Role,
 		ContentJSON: string(r.Content),
 		CreatedAt:   r.CreatedAt,
+
+		ID:                    r.MessageID,
+		RequestMessageID:      r.RequestMessageID,
+		FormatVersion:         r.FormatVersion,
+		Status:                r.MessageStatus,
+		ReplyToMessageID:      r.ReplyToMessageID,
+		UsageJSON:             rawOrEmpty(r.Usage),
+		ProviderMetadataJSON:  rawOrEmpty(r.ProviderMetadata),
+		ClientRequestID:       r.ClientRequestID,
+		RequestHash:           r.RequestHash,
+		ExecutionStatus:       r.ExecutionStatus,
+		StartedAt:             r.StartedAt,
+		FinishedAt:            r.FinishedAt,
+		ErrorCode:             r.ErrorCode,
+		CancellationRequested: r.CancellationRequested,
 	}
+}
+
+// rawOrEmpty normalizes a JSON null / absent payload to an empty string so the
+// domain never carries the literal "null".
+func rawOrEmpty(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	return string(raw)
 }
 
 func (c *Client) CreateSession(ctx context.Context, id, userID, llmModel, agentID string) (session.Session, error) {
@@ -222,10 +279,10 @@ func (c *Client) GetMessages(ctx context.Context, sessionID string, beforeSeq, l
 }
 
 func (c *Client) DeleteSession(ctx context.Context, id string) error {
-	// Messages first so no orphans are left if the session delete fails.
-	if err := c.do(ctx, http.MethodDelete, "/rest/v1/agent_messages", url.Values{"session_id": {"eq." + id}}, nil, "", nil); err != nil {
-		return err
-	}
+	// One delete: agent_messages, agent_session_config, agent_context_checkpoints
+	// and agent_mutation_receipts all cascade from agent_sessions. Deleting the
+	// child rows first would trip agent_sessions' active-request/checkpoint
+	// foreign keys while the session still points at them.
 	q := url.Values{"id": {"eq." + id}}
 	var rows []sessionRow
 	if err := c.do(ctx, http.MethodDelete, "/rest/v1/agent_sessions", q, nil, "return=representation", &rows); err != nil {

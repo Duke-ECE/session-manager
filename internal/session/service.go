@@ -257,11 +257,17 @@ func (s *Service) ownedSession(ctx context.Context, sessionID, userID string) (S
 // tokenOK reports whether any presented token matches the shared service
 // token. An empty configured token fails closed.
 func (s *Service) tokenOK(presented []string) bool {
-	if s.serviceToken == "" {
+	return presentedTokenOK(s.serviceToken, presented)
+}
+
+// presentedTokenOK is the shared constant-time service-token check used by both
+// the v1 and v2 slices. An empty configured token fails closed.
+func presentedTokenOK(configured string, presented []string) bool {
+	if configured == "" {
 		return false
 	}
 	for _, v := range presented {
-		if subtle.ConstantTimeCompare([]byte(v), []byte(s.serviceToken)) == 1 {
+		if subtle.ConstantTimeCompare([]byte(v), []byte(configured)) == 1 {
 			return true
 		}
 	}

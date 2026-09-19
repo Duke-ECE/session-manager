@@ -21,6 +21,9 @@ const (
 	// KindFailedPrecondition is a state conflict, e.g. writing to an
 	// already-ended session.
 	KindFailedPrecondition
+	// KindAborted is a lost fencing race: a stale lease, an expired lease, or a
+	// revision/mutation conflict. The caller may retry against fresh state.
+	KindAborted
 )
 
 // Error is a domain failure with a caller-facing message. The transport

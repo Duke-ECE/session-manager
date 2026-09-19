@@ -8,11 +8,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-
-	"github.com/Duke-ECE/session-manager/internal/session"
 )
+
+// APIError is a non-2xx PostgREST response. PostgREST puts the SQLSTATE in Code
+// and, for the transaction functions, session_fail's machine-readable reason in
+// Details; Message is the caller-facing prose.
+type APIError struct {
+	StatusCode int
+	Code       string `json:"code"`
+	Details    string `json:"details"`
+	Message    string `json:"message"`
+	Hint       string `json:"hint"`
+}
+
+func (e *APIError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("postgrest %d %s: %s", e.StatusCode, e.Code, e.Details)
+	}
+	return fmt.Sprintf("postgrest %d %s: %s", e.StatusCode, e.Code, e.Message)
+}
 
 // Client reads and writes public.agent_sessions / public.agent_messages
 // through the Supabase PostgREST REST API. Access requires the service role
@@ -23,9 +40,10 @@ type Client struct {
 	client     *http.Client
 }
 
-// NewClient returns a session.Store backed by Supabase PostgREST. A nil
-// httpClient uses http.DefaultClient.
-func NewClient(url, serviceKey string, httpClient *http.Client) session.Store {
+// NewClient returns a Client backed by Supabase PostgREST; it implements both
+// session.Store (v1) and session.DurableStore (v2). A nil httpClient uses
+// http.DefaultClient.
+func NewClient(url, serviceKey string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -71,7 +89,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: unexpected status %d", method, path, resp.StatusCode)
+		// PostgREST reports the failure as JSON; surface its machine-readable
+		// reason so callers can map it to a domain error.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		if err := json.Unmarshal(body, apiErr); err != nil || (apiErr.Message == "" && apiErr.Code == "") {
+			return &APIError{StatusCode: resp.StatusCode, Message: http.StatusText(resp.StatusCode)}
+		}
+		return apiErr
 	}
 	if out == nil {
 		return nil

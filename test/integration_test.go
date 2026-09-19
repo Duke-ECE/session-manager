@@ -49,7 +49,8 @@ func newSessionServiceClient(t *testing.T) v1.SessionServiceClient {
 	// gRPC transport.
 	store := postgrest.NewClient(supabase.URL, "test-service-key", nil)
 	svc := session.NewService(store, testServiceToken)
-	srv := transportgrpc.NewServer(svc)
+	durable := session.NewDurableService(store, testServiceToken)
+	srv := transportgrpc.NewServer(svc, durable)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -407,6 +408,16 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		f.sessions = kept
+		if len(deleted) > 0 {
+			// agent_messages cascades from agent_sessions in Postgres.
+			keptMsgs := f.messages[:0]
+			for _, row := range f.messages {
+				if row["session_id"] != id {
+					keptMsgs = append(keptMsgs, row)
+				}
+			}
+			f.messages = keptMsgs
+		}
 		writeJSON(w, deleted)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

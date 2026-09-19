@@ -11,6 +11,19 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,6 +34,12 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: ./scripts/check.sh
+      # Constraints, locks, lease fencing, revision races, RLS and privileges
+      # cannot be proven against a mocked PostgREST: run them on real Postgres.
+      - name: Verify migrations and transaction functions on Postgres
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: ./scripts/verify-db.sh
 
   build-push:
     if: github.event_name == 'push'

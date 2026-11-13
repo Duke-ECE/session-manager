@@ -28,15 +28,18 @@ func NewService(st Store, serviceToken string) *Service {
 
 // CreateSession validates the request, generates the id, and inserts the
 // session row. agentID is the opaque agent-template id; empty means none.
-func (s *Service) CreateSession(ctx context.Context, userID, llmModel, agentID string) (Session, error) {
+func (s *Service) CreateSession(ctx context.Context, userID, llmModel, agentID, thinkingMode string) (Session, error) {
 	if userID == "" {
 		return Session{}, invalidArgument("user_id is required")
+	}
+	if thinkingMode != "" && thinkingMode != "off" && thinkingMode != "low" && thinkingMode != "high" && thinkingMode != "max" && thinkingMode != "provider_default" {
+		return Session{}, invalidArgument("invalid thinking_mode")
 	}
 	id, err := newSessionID()
 	if err != nil {
 		return Session{}, internal(fmt.Sprintf("generate session id: %v", err))
 	}
-	return s.store.CreateSession(ctx, id, userID, llmModel, agentID)
+	return s.store.CreateSession(ctx, id, userID, llmModel, agentID, thinkingMode)
 }
 
 // GetSession returns the session only if userID owns it.
@@ -166,8 +169,8 @@ const maxTranscriptLimit = 1000
 // window — the up to limit messages with seq < beforeSeq (beforeSeq = 0
 // means "from the end") — and hasMore true when older messages exist before
 // the window. Owner-path reads redact the LLM api_key from "config" turns
-// (see redactConfigAPIKeys); the token path returns them intact because
-// runtime hydration needs the full triple to resume the session.
+// and all private agent_state payloads; the token path returns them intact
+// because runtime hydration needs the exact provider messages.
 func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, tokens []string, beforeSeq, limit int32) ([]Message, bool, error) {
 	if sessionID == "" {
 		return nil, false, invalidArgument("session_id is required")
@@ -195,23 +198,23 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, t
 	if err != nil {
 		return nil, false, err
 	}
-	// Owner-path reads (the web backend fetching a browser transcript) must
-	// never expose the frozen LLM key persisted in config turns; the token
-	// path (runtime hydration) needs the full triple to resume the session.
+	// Owner reads hide credentials and private agent state. Runtime hydration
+	// uses the token path to recover exact provider messages.
 	if userID != "" {
-		redactConfigAPIKeys(msgs)
+		redactPrivateTranscript(msgs)
 	}
 	return msgs, hasMore, nil
 }
 
-// redactConfigAPIKeys strips the LLM api_key from "config" transcript turns
-// in place: a turn's content_json {"llm": {"api_key": ..., ...}} is decoded,
-// the api_key entry is deleted (not blanked — an absent key can't be mistaken
-// for a credential), and the payload is re-encoded. Anything unexpected —
-// malformed JSON, a non-object payload, a missing/non-object "llm", no
-// api_key — leaves the turn byte-identical; redaction never fails a read.
-func redactConfigAPIKeys(msgs []Message) {
+// redactPrivateTranscript hides exact provider messages and strips the LLM
+// api_key from config turns. Malformed or unusual config payloads pass through
+// unchanged, while agent_state is always replaced regardless of its shape.
+func redactPrivateTranscript(msgs []Message) {
 	for i := range msgs {
+		if msgs[i].Role == "agent_state" {
+			msgs[i].ContentJSON = `{"redacted":true}`
+			continue
+		}
 		if msgs[i].Role != "config" {
 			continue
 		}

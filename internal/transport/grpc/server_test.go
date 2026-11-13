@@ -114,6 +114,34 @@ func TestCreateSessionEmptyUser(t *testing.T) {
 	}
 }
 
+func TestCreateSessionFreezesThinkingMode(t *testing.T) {
+	c := newTestClient(t, testToken)
+	created, err := c.CreateSession(context.Background(), &v1.CreateSessionRequest{
+		UserId: "user-a", LlmModel: "deepseek-flash", ThinkingMode: "low",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	id := created.GetSession().GetId()
+	if created.GetSession().GetThinkingMode() != "low" {
+		t.Fatalf("created thinking_mode = %q", created.GetSession().GetThinkingMode())
+	}
+	got, err := c.GetSession(context.Background(), &v1.GetSessionRequest{SessionId: id, UserId: "user-a"})
+	if err != nil || got.GetSession().GetThinkingMode() != "low" {
+		t.Fatalf("GetSession thinking_mode = %q, err = %v", got.GetSession().GetThinkingMode(), err)
+	}
+	listed, err := c.ListSessions(context.Background(), &v1.ListSessionsRequest{UserId: "user-a"})
+	if err != nil || len(listed.GetSessions()) != 1 || listed.GetSessions()[0].GetThinkingMode() != "low" {
+		t.Fatalf("ListSessions thinking_mode = %v, err = %v", listed.GetSessions(), err)
+	}
+	_, err = c.CreateSession(context.Background(), &v1.CreateSessionRequest{
+		UserId: "user-a", ThinkingMode: "invalid",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("invalid thinking_mode: code = %v, err = %v", status.Code(err), err)
+	}
+}
+
 func TestCreateSessionAgentID(t *testing.T) {
 	c := newTestClient(t, testToken)
 

@@ -20,7 +20,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{sessions: map[string]Session{}, messages: map[string][]Message{}}
 }
 
-func (f *fakeStore) CreateSession(context.Context, string, string, string, string) (Session, error) {
+func (f *fakeStore) CreateSession(context.Context, string, string, string, string, string) (Session, error) {
 	panic("unused")
 }
 func (f *fakeStore) GetSession(context.Context, string) (Session, error) { panic("unused") }

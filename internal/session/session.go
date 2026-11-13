@@ -11,15 +11,16 @@ package session
 // Session mirrors a row in agent_sessions. Timestamps are RFC 3339 strings
 // as returned by PostgREST; EndedAt is empty unless the session has ended.
 type Session struct {
-	ID         string
-	UserID     string
-	Status     string
-	LLMModel   string
-	Title      string
-	AgentID    string
-	CreatedAt  string
-	LastActive string
-	EndedAt    string
+	ID           string
+	UserID       string
+	Status       string
+	LLMModel     string
+	Title        string
+	AgentID      string
+	ThinkingMode string
+	CreatedAt    string
+	LastActive   string
+	EndedAt      string
 }
 
 // Message mirrors a row in agent_messages. ContentJSON is the raw JSON

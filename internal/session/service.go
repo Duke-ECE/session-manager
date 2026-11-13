@@ -198,11 +198,10 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, t
 	if err != nil {
 		return nil, false, err
 	}
-	// Owner-path reads (the web backend fetching a browser transcript) must
-	// never expose the frozen LLM key persisted in config turns; the token
-	// path (runtime hydration) needs the full triple to resume the session.
+	// Owner reads hide credentials and private agent state. Runtime hydration
+	// uses the token path to recover exact provider messages.
 	if userID != "" {
-		redactConfigAPIKeys(msgs)
+		redactPrivateTranscript(msgs)
 	}
 	return msgs, hasMore, nil
 }
@@ -213,8 +212,12 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, t
 // for a credential), and the payload is re-encoded. Anything unexpected —
 // malformed JSON, a non-object payload, a missing/non-object "llm", no
 // api_key — leaves the turn byte-identical; redaction never fails a read.
-func redactConfigAPIKeys(msgs []Message) {
+func redactPrivateTranscript(msgs []Message) {
 	for i := range msgs {
+		if msgs[i].Role == "agent_state" {
+			msgs[i].ContentJSON = `{"redacted":true}`
+			continue
+		}
 		if msgs[i].Role != "config" {
 			continue
 		}

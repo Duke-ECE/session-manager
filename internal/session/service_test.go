@@ -42,6 +42,7 @@ func TestGetTranscriptRedaction(t *testing.T) {
 		{Seq: 2, Role: "config", ContentJSON: configFull},
 		{Seq: 3, Role: "config", ContentJSON: configMalformed},
 		{Seq: 4, Role: "config", ContentJSON: configOddShape},
+		{Seq: 5, Role: "agent_state", ContentJSON: `{"message":{"role":"assistant","content":[{"type":"thinking","thinking":"secret reasoning"}]}}`},
 	}
 	svc := NewService(store, "tok")
 
@@ -51,10 +52,10 @@ func TestGetTranscriptRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTranscript as owner: %v", err)
 	}
-	if len(msgs) != 4 {
-		t.Fatalf("owner transcript = %d messages, want 4", len(msgs))
+	if len(msgs) != 5 {
+		t.Fatalf("owner transcript = %d messages, want 5", len(msgs))
 	}
-	for i, want := range []int32{1, 2, 3, 4} {
+	for i, want := range []int32{1, 2, 3, 4, 5} {
 		if msgs[i].Seq != want {
 			t.Errorf("message %d seq = %d, want %d (ordering broken)", i, msgs[i].Seq, want)
 		}
@@ -78,6 +79,9 @@ func TestGetTranscriptRedaction(t *testing.T) {
 	if msgs[3].ContentJSON != configOddShape {
 		t.Errorf("odd-shape config turn = %q, want byte-identical passthrough %q", msgs[3].ContentJSON, configOddShape)
 	}
+	if got := msgs[4].ContentJSON; got != `{"redacted":true}` {
+		t.Errorf("owner private state = %q", got)
+	}
 
 	// The store itself is untouched: redaction happens on the returned copy.
 	if got := store.messages["sess-x"][1].ContentJSON; got != configFull {
@@ -89,7 +93,7 @@ func TestGetTranscriptRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTranscript with token: %v", err)
 	}
-	for i, want := range []string{systemTurn, configFull, configMalformed, configOddShape} {
+	for i, want := range []string{systemTurn, configFull, configMalformed, configOddShape, store.messages["sess-x"][4].ContentJSON} {
 		if msgs[i].ContentJSON != want {
 			t.Errorf("token-path message %d = %q, want byte-identical %q", i, msgs[i].ContentJSON, want)
 		}

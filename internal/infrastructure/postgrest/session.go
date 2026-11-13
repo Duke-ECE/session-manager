@@ -17,28 +17,30 @@ var _ session.Store = (*Client)(nil)
 // sessionRow maps the agent_sessions table. JSON null decodes into Go
 // strings as a no-op, so nullable columns stay empty strings.
 type sessionRow struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user_id"`
-	Status     string `json:"status"`
-	LLMModel   string `json:"llm_model"`
-	Title      string `json:"title"`
-	AgentID    string `json:"agent_id"`
-	CreatedAt  string `json:"created_at"`
-	LastActive string `json:"last_active"`
-	EndedAt    string `json:"ended_at"`
+	ID           string `json:"id"`
+	UserID       string `json:"user_id"`
+	Status       string `json:"status"`
+	LLMModel     string `json:"llm_model"`
+	Title        string `json:"title"`
+	AgentID      string `json:"agent_id"`
+	ThinkingMode string `json:"thinking_mode"`
+	CreatedAt    string `json:"created_at"`
+	LastActive   string `json:"last_active"`
+	EndedAt      string `json:"ended_at"`
 }
 
 func (r sessionRow) toSession() session.Session {
 	return session.Session{
-		ID:         r.ID,
-		UserID:     r.UserID,
-		Status:     r.Status,
-		LLMModel:   r.LLMModel,
-		Title:      r.Title,
-		AgentID:    r.AgentID,
-		CreatedAt:  r.CreatedAt,
-		LastActive: r.LastActive,
-		EndedAt:    r.EndedAt,
+		ID:           r.ID,
+		UserID:       r.UserID,
+		Status:       r.Status,
+		LLMModel:     r.LLMModel,
+		Title:        r.Title,
+		AgentID:      r.AgentID,
+		ThinkingMode: r.ThinkingMode,
+		CreatedAt:    r.CreatedAt,
+		LastActive:   r.LastActive,
+		EndedAt:      r.EndedAt,
 	}
 }
 
@@ -59,13 +61,16 @@ func (r messageRow) toMessage() session.Message {
 	}
 }
 
-func (c *Client) CreateSession(ctx context.Context, id, userID, llmModel, agentID string) (session.Session, error) {
+func (c *Client) CreateSession(ctx context.Context, id, userID, llmModel, agentID, thinkingMode string) (session.Session, error) {
 	row := map[string]string{"id": id, "user_id": userID}
 	if llmModel != "" {
 		row["llm_model"] = llmModel
 	}
 	if agentID != "" {
 		row["agent_id"] = agentID
+	}
+	if thinkingMode != "" {
+		row["thinking_mode"] = thinkingMode
 	}
 	var rows []sessionRow
 	if err := c.do(ctx, http.MethodPost, "/rest/v1/agent_sessions", nil, row, "return=representation", &rows); err != nil {

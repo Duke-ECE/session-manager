@@ -24,7 +24,7 @@ func NewSessionHandler(svc *session.Service) *SessionHandler {
 }
 
 func (h *SessionHandler) CreateSession(ctx context.Context, req *v1.CreateSessionRequest) (*v1.CreateSessionResponse, error) {
-	sess, err := h.svc.CreateSession(ctx, req.GetUserId(), req.GetLlmModel(), req.GetAgentId())
+	sess, err := h.svc.CreateSession(ctx, req.GetUserId(), req.GetLlmModel(), req.GetAgentId(), req.GetThinkingMode())
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -112,14 +112,15 @@ func presentedTokens(ctx context.Context) []string {
 
 func toProtoSession(sess session.Session) *v1.Session {
 	return &v1.Session{
-		Id:         sess.ID,
-		UserId:     sess.UserID,
-		Status:     sess.Status,
-		LlmModel:   sess.LLMModel,
-		Title:      sess.Title,
-		AgentId:    sess.AgentID,
-		CreatedAt:  sess.CreatedAt,
-		LastActive: sess.LastActive,
-		EndedAt:    sess.EndedAt,
+		Id:           sess.ID,
+		UserId:       sess.UserID,
+		Status:       sess.Status,
+		LlmModel:     sess.LLMModel,
+		Title:        sess.Title,
+		AgentId:      sess.AgentID,
+		ThinkingMode: sess.ThinkingMode,
+		CreatedAt:    sess.CreatedAt,
+		LastActive:   sess.LastActive,
+		EndedAt:      sess.EndedAt,
 	}
 }

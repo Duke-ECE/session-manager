@@ -33,6 +33,22 @@ func testConfig() session.SessionConfig {
 	}
 }
 
+func TestThinkingModeChangesConfigHash(t *testing.T) {
+	cfg := testConfig()
+	legacy := cfg.ComputeConfigHash()
+	cfg.ThinkingMode = "low"
+	if cfg.ComputeConfigHash() == legacy {
+		t.Fatal("thinking mode did not change config hash")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ThinkingMode = "invalid"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid thinking mode accepted")
+	}
+}
+
 func newFixture(t *testing.T) (*session.DurableService, *memory.Store, session.Session) {
 	t.Helper()
 	st := memory.New()

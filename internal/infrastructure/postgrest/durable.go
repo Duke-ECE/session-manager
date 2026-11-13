@@ -113,6 +113,7 @@ type configJSON struct {
 	Provider            string          `json:"provider"`
 	Model               string          `json:"model"`
 	BaseURL             string          `json:"base_url"`
+	ThinkingMode        string          `json:"thinking_mode"`
 	CredentialRef       string          `json:"credential_ref"`
 	ContextWindowTokens int64           `json:"context_window_tokens"`
 	OutputLimitTokens   int64           `json:"output_limit_tokens"`
@@ -129,6 +130,7 @@ func (r configJSON) toConfig() session.SessionConfig {
 		Provider:            r.Provider,
 		Model:               r.Model,
 		BaseURL:             r.BaseURL,
+		ThinkingMode:        r.ThinkingMode,
 		CredentialRef:       r.CredentialRef,
 		ContextWindowTokens: r.ContextWindowTokens,
 		OutputLimitTokens:   r.OutputLimitTokens,
@@ -209,6 +211,7 @@ func configPayload(c session.SessionConfig) map[string]any {
 		"provider":              c.Provider,
 		"model":                 c.Model,
 		"base_url":              c.BaseURL,
+		"thinking_mode":         c.ThinkingMode,
 		"credential_ref":        c.CredentialRef,
 		"context_window_tokens": c.ContextWindowTokens,
 		"output_limit_tokens":   c.OutputLimitTokens,

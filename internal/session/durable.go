@@ -166,6 +166,7 @@ type SessionConfig struct {
 	Provider            string
 	Model               string
 	BaseURL             string
+	ThinkingMode        string
 	CredentialRef       string
 	ContextWindowTokens int64
 	OutputLimitTokens   int64
@@ -184,6 +185,11 @@ func (c SessionConfig) Validate() error {
 	}
 	if c.Model == "" || c.BaseURL == "" {
 		return fmt.Errorf("config model and base_url are required")
+	}
+	switch c.ThinkingMode {
+	case "", "off", "low", "high", "max", "provider_default":
+	default:
+		return fmt.Errorf("invalid thinking_mode")
 	}
 	if c.ContextWindowTokens <= 0 || c.OutputLimitTokens <= 0 {
 		return fmt.Errorf("config context_window_tokens and output_limit_tokens must be positive")

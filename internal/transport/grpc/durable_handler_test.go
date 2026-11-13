@@ -58,6 +58,7 @@ func TestDurableGRPCRoundTrip(t *testing.T) {
 			Provider:            "openai",
 			Model:               "gpt-4o-mini",
 			BaseUrl:             "https://llm.example.com/v1",
+			ThinkingMode:        "low",
 			CredentialRef:       "cred-1",
 			ContextWindowTokens: 128000,
 			OutputLimitTokens:   4096,
@@ -160,7 +161,7 @@ func TestDurableGRPCRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetExecutionContext: %v", err)
 	}
-	if state.GetConfig().GetConfigHash() == "" || state.GetConfig().GetModel() != "gpt-4o-mini" {
+	if state.GetConfig().GetConfigHash() == "" || state.GetConfig().GetModel() != "gpt-4o-mini" || state.GetConfig().GetThinkingMode() != "low" {
 		t.Errorf("context config = %+v", state.GetConfig())
 	}
 }

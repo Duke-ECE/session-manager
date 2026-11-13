@@ -48,6 +48,9 @@ func (c SessionConfig) ComputeConfigHash() string {
 		c.SystemPrompt, c.ContextWindowTokens, c.OutputLimitTokens)
 	tools, _ := json.Marshal(c.Tools)
 	h.Write(tools)
+	if c.ThinkingMode != "" {
+		fmt.Fprintf(h, "\x00thinking_mode\x00%s", c.ThinkingMode)
+	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
@@ -330,7 +333,7 @@ func (s *DurableService) GetMessages(ctx context.Context, sessionID, userID stri
 		return nil, false, 0, err
 	}
 	if userID != "" {
-		redactConfigAPIKeys(msgs)
+		redactPrivateTranscript(msgs)
 	}
 	return msgs, hasMore, sess.Revision, nil
 }

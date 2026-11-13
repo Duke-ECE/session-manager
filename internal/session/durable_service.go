@@ -333,7 +333,7 @@ func (s *DurableService) GetMessages(ctx context.Context, sessionID, userID stri
 		return nil, false, 0, err
 	}
 	if userID != "" {
-		redactConfigAPIKeys(msgs)
+		redactPrivateTranscript(msgs)
 	}
 	return msgs, hasMore, sess.Revision, nil
 }

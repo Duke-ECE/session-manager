@@ -166,8 +166,8 @@ const maxTranscriptLimit = 1000
 // window — the up to limit messages with seq < beforeSeq (beforeSeq = 0
 // means "from the end") — and hasMore true when older messages exist before
 // the window. Owner-path reads redact the LLM api_key from "config" turns
-// (see redactConfigAPIKeys); the token path returns them intact because
-// runtime hydration needs the full triple to resume the session.
+// and all private agent_state payloads; the token path returns them intact
+// because runtime hydration needs the exact provider messages.
 func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, tokens []string, beforeSeq, limit int32) ([]Message, bool, error) {
 	if sessionID == "" {
 		return nil, false, invalidArgument("session_id is required")
@@ -203,12 +203,9 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID, userID string, t
 	return msgs, hasMore, nil
 }
 
-// redactConfigAPIKeys strips the LLM api_key from "config" transcript turns
-// in place: a turn's content_json {"llm": {"api_key": ..., ...}} is decoded,
-// the api_key entry is deleted (not blanked — an absent key can't be mistaken
-// for a credential), and the payload is re-encoded. Anything unexpected —
-// malformed JSON, a non-object payload, a missing/non-object "llm", no
-// api_key — leaves the turn byte-identical; redaction never fails a read.
+// redactPrivateTranscript hides exact provider messages and strips the LLM
+// api_key from config turns. Malformed or unusual config payloads pass through
+// unchanged, while agent_state is always replaced regardless of its shape.
 func redactPrivateTranscript(msgs []Message) {
 	for i := range msgs {
 		if msgs[i].Role == "agent_state" {

@@ -38,6 +38,18 @@ Defined in the [`Duke-ECE/protos`](https://github.com/Duke-ECE/protos) repo
   up-to-`limit` messages with `seq < before_seq` (`before_seq` 0 = the latest
   ones), ascending, with `has_more` true when older messages exist (cap 1000)
 
+**`session.v2.WorkspaceService`** stores a session's committed R2 archive
+pointer, never archive bytes or R2 credentials:
+
+- `GetWorkspace` returns revision zero before the first checkpoint. Owners may
+  read their own pointer; internal callers use `x-service-token`.
+- `CommitWorkspace` requires the service token and atomically compares the
+  expected workspace revision before storing a new immutable object key,
+  SHA-256, size, and idempotency mutation id. It rejects ended sessions.
+- `ListWorkspacesForCleanup` and `FinishWorkspaceDeletion` are token-only.
+  Purging or retention deletion leaves a durable cleanup intent. The sandbox
+  manager removes R2 objects after signed URLs expire, then removes the intent.
+
 ### Privilege model
 
 | RPC | Rule |
@@ -68,6 +80,11 @@ Server reflection is enabled for `grpcurl`.
 `supabase/migrations/20260726000001_sessions.sql` creates `agent_sessions` and
 `agent_messages` (RLS on, no policies). Apply it with the Supabase CLI or
 paste it into the SQL editor.
+
+`supabase/migrations/20261122000000_session_workspaces.sql` adds the
+service-role-only workspace table, atomic commit function, and a trigger that
+preserves deletion intent when a conversation is purged. `scripts/verify-db.sh`
+tests the migration on fresh and upgraded Postgres databases.
 
 ## Local development
 

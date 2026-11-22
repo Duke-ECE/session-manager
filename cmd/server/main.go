@@ -20,6 +20,7 @@ import (
 type store interface {
 	session.Store
 	session.DurableStore
+	session.WorkspaceStore
 }
 
 func main() {
@@ -55,6 +56,7 @@ func main() {
 
 	svcV1 := session.NewService(st, serviceToken)
 	svcV2 := session.NewDurableService(st, serviceToken)
+	svcWorkspace := session.NewWorkspaceService(st, serviceToken)
 
 	ctx, stopJanitor := context.WithCancel(context.Background())
 	defer stopJanitor()
@@ -69,7 +71,7 @@ func main() {
 		log.Fatalf("listen %s: %v", addr, err)
 	}
 
-	s := transportgrpc.NewServer(svcV1, svcV2)
+	s := transportgrpc.NewServer(svcV1, svcV2, svcWorkspace)
 
 	go func() {
 		log.Printf("session-manager gRPC listening on %s (supabase_configured=%t, service_token_set=%t)",

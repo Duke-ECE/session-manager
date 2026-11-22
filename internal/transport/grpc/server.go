@@ -16,11 +16,14 @@ import (
 // NewServer builds a grpc.Server with both SessionService versions registered
 // and reflection enabled (for grpcurl). durable may be nil during a staged
 // rollout, in which case only v1 is served.
-func NewServer(svc *session.Service, durable *session.DurableService) *googlegrpc.Server {
+func NewServer(svc *session.Service, durable *session.DurableService, workspace ...*session.WorkspaceService) *googlegrpc.Server {
 	s := googlegrpc.NewServer()
 	v1.RegisterSessionServiceServer(s, NewSessionHandler(svc))
 	if durable != nil {
 		v2.RegisterSessionServiceServer(s, NewDurableHandler(durable))
+	}
+	if len(workspace) > 0 && workspace[0] != nil {
+		v2.RegisterWorkspaceServiceServer(s, NewWorkspaceHandler(workspace[0]))
 	}
 	reflection.Register(s)
 	return s

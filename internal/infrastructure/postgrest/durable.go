@@ -569,10 +569,10 @@ func mapError(err error) error {
 		return &session.Error{Kind: session.KindPermissionDenied, Message: apiErr.Message}
 	case "invalid_argument", "hash_conflict":
 		return &session.Error{Kind: session.KindInvalidArgument, Message: apiErr.Message}
-	case "stale_lease", "lease_expired", "lease_conflict", "revision_conflict", "mutation_conflict":
+	case "stale_lease", "lease_expired", "lease_conflict", "revision_conflict", "mutation_conflict", "aborted":
 		return &session.Error{Kind: session.KindAborted, Message: apiErr.Message}
 	case "session_ended", "request_busy", "request_terminal", "request_not_active", "request_cancelled",
-		"parent_conflict", "config_mismatch":
+		"parent_conflict", "config_mismatch", "failed_precondition":
 		return &session.Error{Kind: session.KindFailedPrecondition, Message: apiErr.Message}
 	}
 	switch apiErr.Code {

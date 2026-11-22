@@ -68,6 +68,7 @@ for f in supabase/migrations/*.sql; do
   migrate "$FRESH" "$f"
 done
 migrate "$FRESH" "$SUITE"
+migrate "$FRESH" supabase/tests/workspaces.sql
 
 echo "== upgraded database: $UPGRADE (v1 schema with retained rows) =="
 reset_db "$UPGRADE"
@@ -108,4 +109,6 @@ end $$;
 SQL
 
 migrate "$UPGRADE" "$SUITE"
+apply_range "$UPGRADE" 20261113175548_durable_thinking_mode.sql 20261122000000_session_workspaces.sql
+migrate "$UPGRADE" supabase/tests/workspaces.sql
 echo "verify-db: all checks passed"

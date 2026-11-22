@@ -18,20 +18,80 @@ import (
 
 // Store is an in-memory session.DurableStore and session.Store.
 type Store struct {
-	mu       sync.Mutex
-	now      func() time.Time
-	sessions map[string]*state
+	mu                  sync.Mutex
+	now                 func() time.Time
+	sessions            map[string]*state
+	workspaceTombstones map[string]session.WorkspaceCleanupTarget
 }
 
 type state struct {
-	sess        session.Session
-	config      session.SessionConfig
-	messages    []session.Message
-	checkpoints map[string]session.Checkpoint
+	sess                 session.Session
+	config               session.SessionConfig
+	messages             []session.Message
+	checkpoints          map[string]session.Checkpoint
+	workspace            session.WorkspaceRevision
+	workspaceInitialized bool
+	workspaceMutationID  string
 	// receipts keyed by mutation id; only the three mutated operations use them.
 	appendReceipts  map[string]appendReceipt
 	finishReceipts  map[string]finishReceipt
 	publishReceipts map[string]publishReceipt
+}
+
+func (s *Store) GetWorkspace(_ context.Context, sessionID string) (session.WorkspaceRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[sessionID]
+	if !ok {
+		return session.WorkspaceRevision{}, session.ErrNotFound
+	}
+	if st.workspace.SessionID == "" {
+		return session.WorkspaceRevision{SessionID: sessionID}, nil
+	}
+	return st.workspace, nil
+}
+
+func (s *Store) EnsureWorkspace(_ context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[sessionID]
+	if !ok {
+		return session.ErrNotFound
+	}
+	if st.sess.Status != "active" {
+		return precondition("session is ended")
+	}
+	st.workspaceInitialized = true
+	return nil
+}
+
+func (s *Store) CommitWorkspace(_ context.Context, p session.CommitWorkspaceParams) (session.CommitWorkspaceResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[p.SessionID]
+	if !ok {
+		return session.CommitWorkspaceResult{}, session.ErrNotFound
+	}
+	if st.workspaceMutationID == p.MutationID {
+		if st.workspace.ObjectKey != p.ObjectKey || st.workspace.SHA256 != p.SHA256 || st.workspace.SizeBytes != p.SizeBytes || st.workspace.Revision != p.ExpectedRevision+1 {
+			return session.CommitWorkspaceResult{}, precondition("mutation id reused with different content")
+		}
+		return session.CommitWorkspaceResult{Workspace: st.workspace, Deduplicated: true}, nil
+	}
+	if st.sess.Status != "active" {
+		return session.CommitWorkspaceResult{}, precondition("session is ended")
+	}
+	if st.workspace.Revision != p.ExpectedRevision {
+		return session.CommitWorkspaceResult{}, aborted("workspace revision changed")
+	}
+	st.workspace = session.WorkspaceRevision{
+		SessionID: p.SessionID, Revision: p.ExpectedRevision + 1,
+		ObjectKey: p.ObjectKey, SHA256: p.SHA256, SizeBytes: p.SizeBytes,
+		CommittedAt: ts(s.now()),
+	}
+	st.workspaceMutationID = p.MutationID
+	st.workspaceInitialized = true
+	return session.CommitWorkspaceResult{Workspace: st.workspace}, nil
 }
 
 type appendReceipt struct {
@@ -49,7 +109,7 @@ type publishReceipt struct {
 
 // New returns an empty in-memory store.
 func New() *Store {
-	return &Store{now: time.Now, sessions: map[string]*state{}}
+	return &Store{now: time.Now, sessions: map[string]*state{}, workspaceTombstones: map[string]session.WorkspaceCleanupTarget{}}
 }
 
 // SetClock overrides the clock; tests use it to drive lease expiry.
@@ -184,10 +244,51 @@ func (s *Store) EndSession(_ context.Context, id string, endedAt time.Time) erro
 func (s *Store) DeleteSession(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.sessions[id]; !ok {
+	st, ok := s.sessions[id]
+	if !ok {
 		return session.ErrNotFound
 	}
+	if st.workspaceInitialized {
+		s.workspaceTombstones[id] = session.WorkspaceCleanupTarget{
+			SessionID: id, CurrentObjectKey: st.workspace.ObjectKey,
+			DeletionRequestedAt: ts(s.now()),
+		}
+	}
 	delete(s.sessions, id)
+	return nil
+}
+
+func (s *Store) ListWorkspacesForCleanup(_ context.Context, limit, offset int32) ([]session.WorkspaceCleanupTarget, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	all := make([]session.WorkspaceCleanupTarget, 0)
+	for id, st := range s.sessions {
+		if st.workspaceInitialized {
+			all = append(all, session.WorkspaceCleanupTarget{SessionID: id, CurrentObjectKey: st.workspace.ObjectKey})
+		}
+	}
+	for _, target := range s.workspaceTombstones {
+		all = append(all, target)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].SessionID < all[j].SessionID })
+	if int(offset) >= len(all) {
+		return nil, false, nil
+	}
+	all = all[offset:]
+	hasMore := len(all) > int(limit)
+	if hasMore {
+		all = all[:limit]
+	}
+	return all, hasMore, nil
+}
+
+func (s *Store) FinishWorkspaceDeletion(_ context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaceTombstones[sessionID]; !ok {
+		return session.ErrNotFound
+	}
+	delete(s.workspaceTombstones, sessionID)
 	return nil
 }
 

@@ -34,9 +34,14 @@ for f in supabase/migrations/*.sql; do
     || bad "migration '$base' is not timestamped (YYYYMMDDHHMMSS_name.sql)"
 done
 
-# 5. No obvious secret literals in committed manifests.
-if git ls-files '*.yaml' '*.yml' | xargs grep -lE 'sk-[a-zA-Z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{10,}' 2>/dev/null | grep -q .; then
-  bad "possible secret literal in: $(git ls-files '*.yaml' '*.yml' | xargs grep -lE 'sk-[a-zA-Z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{10,}' 2>/dev/null)"
+# 5. No obvious secret literals in any committed file — manifests, source, and
+#    fixtures alike. A key pasted into a Go or test file is the realistic
+#    accident; the deliberately fake placeholders in tests are shorter than these
+#    patterns, so they do not trip it.
+secret_pattern='sk-[a-zA-Z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{30,}|ghp_[A-Za-z0-9]{30,}'
+secrets=$(git ls-files -z | xargs -0 grep -lE "$secret_pattern" 2>/dev/null || true)
+if [ -n "$secrets" ]; then
+  bad "possible secret literal in: $secrets"
 fi
 
 [ "$fail" -eq 0 ] && echo "check: all rules pass"

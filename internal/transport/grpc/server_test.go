@@ -49,7 +49,8 @@ func newTestClientWithFake(t *testing.T, serviceToken string) (v1.SessionService
 	t.Cleanup(ts.Close)
 
 	lis := bufconn.Listen(1024 * 1024)
-	s := NewServer(session.NewService(postgrest.NewClient(ts.URL, "test-key", nil), serviceToken))
+	client := postgrest.NewClient(ts.URL, "test-key", nil)
+	s := NewServer(session.NewService(client, serviceToken), session.NewDurableService(client, serviceToken))
 	go func() { _ = s.Serve(lis) }()
 	t.Cleanup(s.Stop)
 
@@ -909,6 +910,17 @@ func (f *fakeSupabase) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		f.sessions = kept
+		if len(deleted) > 0 {
+			// agent_messages (and the v2 config/checkpoint/receipt tables) cascade
+			// from agent_sessions in Postgres.
+			keptMsgs := f.messages[:0]
+			for _, row := range f.messages {
+				if row["session_id"] != id {
+					keptMsgs = append(keptMsgs, row)
+				}
+			}
+			f.messages = keptMsgs
+		}
 		writeJSON(w, deleted)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

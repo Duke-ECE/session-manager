@@ -28,6 +28,8 @@ func toStatus(err error) error {
 			code = codes.Unauthenticated
 		case session.KindFailedPrecondition:
 			code = codes.FailedPrecondition
+		case session.KindAborted:
+			code = codes.Aborted
 		}
 		return status.Error(code, domErr.Message)
 	}
